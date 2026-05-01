@@ -52,6 +52,7 @@ export function createMainWindow() {
   });
 
   sdkInstance = initIMSDK(mainWindow.webContents);
+  mainWindow.setContentProtection(true);
 
   if (process.env.VITE_DEV_SERVER_URL) {
     // Open devTool if the app is not packaged

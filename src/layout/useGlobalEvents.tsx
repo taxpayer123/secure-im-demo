@@ -27,6 +27,7 @@ import { useConversationStore, useUserStore } from "@/store";
 import { useContactStore } from "@/store/contact";
 import { feedbackToast } from "@/utils/common";
 import { initStore } from "@/utils/imCommon";
+import { normalizeMessageForRender } from "@/utils/secureChat";
 import { clearIMProfile, getIMToken, getIMUserID } from "@/utils/storage";
 
 import { IMSDK } from "./MainContentWrap";
@@ -261,7 +262,9 @@ export function useGlobalEvent() {
     if (useUserStore.getState().syncState === "loading" || resume.current) {
       return;
     }
-    data.map((message) => handleNewMessage(message));
+    data.forEach((message) => {
+      void handleNewMessage(message);
+    });
   };
 
   const revokedMessageHandler = ({ data }: WSEvent<RevokedInfo>) => {
@@ -276,7 +279,7 @@ export function useGlobalEvent() {
 
   const notPushType = [MessageType.TypingMessage, MessageType.RevokeMessage];
 
-  const handleNewMessage = (newServerMsg: MessageItem) => {
+  const handleNewMessage = async (newServerMsg: MessageItem) => {
     if (newServerMsg.contentType === MessageType.CustomMessage) {
       const customData = JSON.parse(newServerMsg.customElem!.data);
       if (
@@ -290,7 +293,7 @@ export function useGlobalEvent() {
     if (!inCurrentConversation(newServerMsg)) return;
 
     if (!notPushType.includes(newServerMsg.contentType)) {
-      pushNewMessage(newServerMsg);
+      pushNewMessage(await normalizeMessageForRender(newServerMsg));
     }
   };
 

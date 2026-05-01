@@ -5,6 +5,7 @@ import { useParams } from "react-router-dom";
 
 import { IMSDK } from "@/layout/MainContentWrap";
 import emitter, { emit } from "@/utils/events";
+import { normalizeMessageForRender } from "@/utils/secureChat";
 
 const START_INDEX = 10000;
 const SPLIT_COUNT = 20;
@@ -81,14 +82,17 @@ export function useHistoryMessageList() {
         conversationID: conversationID ?? "",
         viewType: ViewType.History,
       });
+      const messageList = await Promise.all(
+        data.messageList.map(normalizeMessageForRender),
+      );
       if (conversationID !== reqConversationID) return;
       setTimeout(() =>
         setLoadState((preState) => ({
           ...preState,
           initLoading: false,
           hasMoreOld: !data.isEnd,
-          messageList: [...data.messageList, ...(loadMore ? preState.messageList : [])],
-          firstItemIndex: preState.firstItemIndex - data.messageList.length,
+          messageList: [...messageList, ...(loadMore ? preState.messageList : [])],
+          firstItemIndex: preState.firstItemIndex - messageList.length,
         })),
       );
     },

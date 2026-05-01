@@ -1,3 +1,4 @@
+import { SafetyCertificateFilled } from "@ant-design/icons";
 import { SessionType } from "@openim/wasm-client-sdk";
 import { Layout, Tooltip } from "antd";
 import clsx from "clsx";
@@ -11,6 +12,7 @@ import OIMAvatar from "@/components/OIMAvatar";
 import { OverlayVisibleHandle } from "@/hooks/useOverlayVisible";
 import { useConversationStore, useUserStore } from "@/store";
 import { emit } from "@/utils/events";
+import { isSecureChatEnabled } from "@/utils/secureChat";
 
 import GroupSetting from "../GroupSetting";
 import SingleSetting from "../SingleSetting";
@@ -91,6 +93,8 @@ const ChatHeader = () => {
 
   const isSingleSession = currentConversation?.conversationType === SessionType.Single;
   const isGroupSession = currentConversation?.conversationType === SessionType.Group;
+  const secureChatEnabled =
+    Boolean(currentConversation?.conversationID) && isSecureChatEnabled();
 
   return (
     <Layout.Header className="relative border-b border-b-[var(--gap-text)] !bg-white !px-3">
@@ -109,12 +113,20 @@ const ChatHeader = () => {
             <div className="truncate text-base font-semibold">
               {currentConversation?.showName}
             </div>
-            {isGroupSession && currentUserIsInGroup && (
-              <div className="flex items-center text-xs text-[var(--sub-text)]">
-                <img width={20} src={group_member} alt="member" />
-                <span>{currentGroupInfo?.memberCount}</span>
-              </div>
-            )}
+            <div className="flex min-h-[20px] items-center gap-2 text-xs text-[var(--sub-text)]">
+              {isGroupSession && currentUserIsInGroup && (
+                <div className="flex items-center">
+                  <img width={20} src={group_member} alt="member" />
+                  <span>{currentGroupInfo?.memberCount}</span>
+                </div>
+              )}
+              {secureChatEnabled && (
+                <span className="inline-flex items-center gap-1 rounded bg-[#f6ffed] px-2 py-0.5 text-[#389e0d]">
+                  <SafetyCertificateFilled />
+                  <span>{t("placeholder.encryptedSession")}</span>
+                </span>
+              )}
+            </div>
           </div>
         </div>
         <div className="mr-5 flex">

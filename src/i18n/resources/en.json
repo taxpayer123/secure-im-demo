@@ -112,7 +112,10 @@
     "getLogFailed": "Failed to retrieve the log file!",
     "publishFailed": "Failed to publish!",
     "notCanAddFriend": "The other party has been set up not to be added as a friend!",
-    "fileTypeError": "Unsupported file type or folder!"
+    "fileTypeError": "Unsupported file type or folder!",
+    "secureChatMissingConfig": "E2EE key is missing. Set VITE_E2EE_PSK in .env.",
+    "secureMessageBlocked": "This message was blocked by the local security policy.",
+    "secureChatUnavailable": "WebCrypto is unavailable, so E2EE cannot be enabled."
   },
   "placeholder": {
     "conversation": "Conversation",
@@ -370,6 +373,8 @@
     "offLine": "Offline",
     "online": "Online",
     "typing": "Typing...",
+    "encryptedSession": "Encrypted",
+    "secureDecryptFailed": "Decrypt failed",
     "kick": "Kick out",
     "kickMember": "Kick out member",
     "forbidLookMemberInfo": "Forbidden to view other group member's details",

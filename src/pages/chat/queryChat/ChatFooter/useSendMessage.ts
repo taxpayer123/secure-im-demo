@@ -6,17 +6,19 @@ import { useCallback } from "react";
 import { IMSDK } from "@/layout/MainContentWrap";
 import { useConversationStore } from "@/store";
 import { emit } from "@/utils/events";
+import { normalizeMessageForRender } from "@/utils/secureChat";
 
 import { pushNewMessage, updateOneMessage } from "../useHistoryMessageList";
 
 export type SendMessageParams = Partial<Omit<SendMsgParams, "message">> & {
   message: MessageItem;
+  displayMessage?: MessageItem;
   needPush?: boolean;
 };
 
 export function useSendMessage() {
   const sendMessage = useCallback(
-    async ({ recvID, groupID, message, needPush }: SendMessageParams) => {
+    async ({ recvID, groupID, message, displayMessage, needPush }: SendMessageParams) => {
       const currentConversation = useConversationStore.getState().currentConversation;
       const sourceID = recvID || groupID;
       const inCurrentConversation =
@@ -24,9 +26,11 @@ export function useSendMessage() {
         currentConversation?.groupID === sourceID ||
         !sourceID;
       needPush = needPush ?? inCurrentConversation;
+      const renderableMessage =
+        displayMessage ?? (await normalizeMessageForRender(message));
 
       if (needPush) {
-        pushNewMessage(message);
+        pushNewMessage(renderableMessage);
         emit("CHAT_LIST_SCROLL_TO_BOTTOM");
       }
 
@@ -38,10 +42,10 @@ export function useSendMessage() {
 
       try {
         const { data: successMessage } = await IMSDK.sendMessage(options);
-        updateOneMessage(successMessage);
+        updateOneMessage(await normalizeMessageForRender(successMessage));
       } catch (error) {
         updateOneMessage({
-          ...message,
+          ...renderableMessage,
           status: MessageStatus.Failed,
         });
       }

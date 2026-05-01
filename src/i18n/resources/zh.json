@@ -113,7 +113,10 @@
     "publishFailed": "发布失败！",
     "notCanAddFriend": "对方已设置不允许被添加为好友！",
     "isJoinCalling": "群通话进行中，是否直接加入？",
-    "fileTypeError": "不支持的文件类型或文件夹！"
+    "fileTypeError": "不支持的文件类型或文件夹！",
+    "secureChatMissingConfig": "未配置端到端加密密钥，请在 .env 中设置 VITE_E2EE_PSK。",
+    "secureMessageBlocked": "消息包含不合规内容，已被本地安全策略拦截",
+    "secureChatUnavailable": "当前环境不支持 WebCrypto，无法启用端到端加密。"
   },
   "placeholder": {
     "conversation": "会话",
@@ -371,6 +374,8 @@
     "offLine": "离线",
     "online": "在线",
     "typing": "正在输入",
+    "encryptedSession": "当前会话已加密",
+    "secureDecryptFailed": "解密失败",
     "kick": "踢出",
     "kickMember": "踢出成员",
     "forbidLookMemberInfo": "不允许查看其他群成员资料",

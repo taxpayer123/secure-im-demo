@@ -7,6 +7,12 @@ import CKEditor from "@/components/CKEditor";
 import { getCleanText } from "@/components/CKEditor/utils";
 import i18n from "@/i18n";
 import { IMSDK } from "@/layout/MainContentWrap";
+import { feedbackToast } from "@/utils/common";
+import {
+  encryptMessage,
+  getSecureChatErrorMessage,
+  normalizeMessageForRender,
+} from "@/utils/secureChat";
 
 import SendActionBar from "./SendActionBar";
 import { useFileMessage } from "./SendActionBar/useFileMessage";
@@ -35,11 +41,20 @@ const ChatFooter: ForwardRefRenderFunction<unknown, unknown> = (_, ref) => {
 
   const enterToSend = async () => {
     const cleanText = getCleanText(latestHtml.current);
-    const message = (await IMSDK.createTextMessage(cleanText)).data;
-    setHtml("");
     if (!cleanText) return;
 
-    sendMessage({ message });
+    try {
+      const secureContent = await encryptMessage(cleanText);
+      const message = (await IMSDK.createTextMessage(secureContent)).data;
+      const displayMessage = await normalizeMessageForRender(message);
+      setHtml("");
+      sendMessage({ message, displayMessage });
+    } catch (error) {
+      feedbackToast({
+        msg: getSecureChatErrorMessage(error),
+        error,
+      });
+    }
   };
 
   return (
