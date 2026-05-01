@@ -32,6 +32,7 @@ yarn.lock
 /test-results/
 /playwright-report/
 /playwright/.cache/
+.env
 
 # sdk core
 open-im-sdk-core.*
