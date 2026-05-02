@@ -31,4 +31,6 @@ export enum CustomType {
   CallingReject = 202,
   CallingCancel = 203,
   CallingHungup = 204,
+  SecureIdentity = 300,
+  SecureSessionInvite = 301,
 }

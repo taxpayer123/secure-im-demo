@@ -115,7 +115,11 @@
     "fileTypeError": "Unsupported file type or folder!",
     "secureChatMissingConfig": "E2EE key is missing. Set VITE_E2EE_PSK in .env.",
     "secureMessageBlocked": "This message was blocked by the local security policy.",
-    "secureChatUnavailable": "WebCrypto is unavailable, so E2EE cannot be enabled."
+    "secureChatUnavailable": "WebCrypto is unavailable, so E2EE cannot be enabled.",
+    "secureSessionGroupUnsupported": "This demo key exchange currently supports single chats only.",
+    "secureSessionPendingIdentity": "A secure identity card was sent. Ask the peer to open the chat, then retry.",
+    "secureSessionPeerKeyChanged": "The peer's secure identity changed. Verify it before re-establishing the session.",
+    "secureSessionNotReady": "The secure session is not ready yet. Retry in a moment."
   },
   "placeholder": {
     "conversation": "Conversation",
@@ -375,6 +379,8 @@
     "typing": "Typing...",
     "encryptedSession": "Encrypted",
     "secureDecryptFailed": "Decrypt failed",
+    "secureSessionPreparing": "Preparing secure session",
+    "secureSessionKeyChanged": "Peer identity changed",
     "kick": "Kick out",
     "kickMember": "Kick out member",
     "forbidLookMemberInfo": "Forbidden to view other group member's details",

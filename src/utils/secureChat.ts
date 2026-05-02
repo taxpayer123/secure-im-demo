@@ -1,13 +1,31 @@
 import { MessageType } from "@openim/wasm-client-sdk";
-import type { MessageItem } from "@openim/wasm-client-sdk/lib/types/entity";
+import type {
+  ConversationItem,
+  MessageItem,
+} from "@openim/wasm-client-sdk/lib/types/entity";
 import { t } from "i18next";
+
+import {
+  decoder,
+  encoder,
+  fromBase64,
+  getSubtleCrypto,
+  importAesKey,
+  randomBytes,
+  toBase64,
+} from "./secureCrypto";
+import {
+  ensureConversationSession,
+  getMessageSessionKey,
+  getSecureSessionErrorMessage,
+  readSessionKeyBytes,
+  SecureSessionError,
+} from "./secureSession";
 
 const SECURE_MESSAGE_TYPE = "secure_text_v1";
 const SECURE_MESSAGE_ALGORITHM = "AES-256-GCM";
 const IV_LENGTH = 12;
 const SALT_LENGTH = 16;
-const PBKDF2_ITERATIONS = 210000;
-const PBKDF2_HASH = "SHA-256";
 const BLOCKED_WORDS = ["暴力", "违禁"];
 
 export type SecurePayload = {
@@ -20,10 +38,7 @@ export type SecurePayload = {
   burnAfterRead?: boolean;
 };
 
-type SecureChatErrorCode =
-  | "SECURE_CHAT_MISSING_PSK"
-  | "SECURE_CHAT_BLOCKED_CONTENT"
-  | "SECURE_CHAT_UNAVAILABLE";
+type SecureChatErrorCode = "SECURE_CHAT_BLOCKED_CONTENT" | "SECURE_CHAT_UNAVAILABLE";
 
 export class SecureChatError extends Error {
   constructor(
@@ -34,45 +49,6 @@ export class SecureChatError extends Error {
     this.name = "SecureChatError";
   }
 }
-
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-const getSubtleCrypto = () => {
-  if (!globalThis.crypto?.subtle) {
-    throw new SecureChatError("SECURE_CHAT_UNAVAILABLE");
-  }
-  return globalThis.crypto.subtle;
-};
-
-const getSecureChatPassword = () => {
-  const password = import.meta.env.VITE_E2EE_PSK?.trim();
-  if (!password) {
-    throw new SecureChatError("SECURE_CHAT_MISSING_PSK");
-  }
-  return password;
-};
-
-const randomBytes = (length: number) => globalThis.crypto.getRandomValues(new Uint8Array(length));
-
-const toBase64 = (value: Uint8Array | ArrayBuffer) => {
-  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
-  let binary = "";
-  const chunkSize = 0x8000;
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
-};
-
-const fromBase64 = (value: string) => {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-};
 
 const isSecurePayload = (value: unknown): value is SecurePayload => {
   if (!value || typeof value !== "object") {
@@ -112,16 +88,58 @@ const withTextContent = (message: MessageItem, content: string): MessageItem => 
   },
 });
 
-export const isSecureChatEnabled = () => Boolean(import.meta.env.VITE_E2EE_PSK?.trim());
+const encryptWithSharedKey = async (
+  plaintext: string,
+  sharedKey: Uint8Array,
+  burnAfterRead?: boolean,
+): Promise<SecurePayload> => {
+  const subtle = getSubtleCrypto();
+  const iv = randomBytes(IV_LENGTH);
+  const salt = randomBytes(SALT_LENGTH);
+  const ciphertext = await subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv,
+    },
+    await importAesKey(sharedKey),
+    encoder.encode(plaintext),
+  );
+
+  return {
+    type: SECURE_MESSAGE_TYPE,
+    alg: SECURE_MESSAGE_ALGORITHM,
+    iv: toBase64(iv),
+    ciphertext: toBase64(ciphertext),
+    salt: toBase64(salt),
+    timestamp: Date.now(),
+    ...(burnAfterRead === undefined ? {} : { burnAfterRead }),
+  };
+};
+
+const decryptWithSharedKey = async (payload: SecurePayload, sharedKey: Uint8Array) => {
+  const subtle = getSubtleCrypto();
+  const plaintext = await subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv: fromBase64(payload.iv),
+    },
+    await importAesKey(sharedKey),
+    fromBase64(payload.ciphertext),
+  );
+
+  return decoder.decode(plaintext);
+};
 
 export const getSecureChatErrorMessage = (error: unknown) => {
+  if (error instanceof SecureSessionError) {
+    return getSecureSessionErrorMessage(error);
+  }
+
   if (!(error instanceof SecureChatError)) {
     return t("toast.accessFailed");
   }
 
   switch (error.code) {
-    case "SECURE_CHAT_MISSING_PSK":
-      return t("toast.secureChatMissingConfig");
     case "SECURE_CHAT_BLOCKED_CONTENT":
       return t("toast.secureMessageBlocked");
     case "SECURE_CHAT_UNAVAILABLE":
@@ -138,85 +156,24 @@ export const validateSensitiveWords = (plaintext: string) => {
   }
 };
 
-export async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const subtle = getSubtleCrypto();
-  const baseKey = await subtle.importKey(
-    "raw",
-    encoder.encode(password),
-    "PBKDF2",
-    false,
-    ["deriveKey"],
-  );
-
-  return subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: PBKDF2_HASH,
-    },
-    baseKey,
-    {
-      name: "AES-GCM",
-      length: 256,
-    },
-    false,
-    ["encrypt", "decrypt"],
-  );
-}
-
-export async function encrypt(
-  plaintext: string,
-  key: CryptoKey,
-  salt: Uint8Array,
-  burnAfterRead?: boolean,
-): Promise<SecurePayload> {
-  const subtle = getSubtleCrypto();
-  const iv = randomBytes(IV_LENGTH);
-  const ciphertext = await subtle.encrypt(
-    {
-      name: "AES-GCM",
-      iv,
-    },
-    key,
-    encoder.encode(plaintext),
-  );
-
-  return {
-    type: SECURE_MESSAGE_TYPE,
-    alg: SECURE_MESSAGE_ALGORITHM,
-    iv: toBase64(iv),
-    ciphertext: toBase64(ciphertext),
-    salt: toBase64(salt),
-    timestamp: Date.now(),
-    ...(burnAfterRead === undefined ? {} : { burnAfterRead }),
-  };
-}
-
-export async function decrypt(payload: SecurePayload, key: CryptoKey): Promise<string> {
-  const subtle = getSubtleCrypto();
-  const plaintext = await subtle.decrypt(
-    {
-      name: "AES-GCM",
-      iv: fromBase64(payload.iv),
-    },
-    key,
-    fromBase64(payload.ciphertext),
-  );
-
-  return decoder.decode(plaintext);
-}
-
 export async function encryptMessage(
   plaintext: string,
+  conversation?: ConversationItem,
   options?: {
     burnAfterRead?: boolean;
   },
 ): Promise<string> {
   validateSensitiveWords(plaintext);
-  const salt = randomBytes(SALT_LENGTH);
-  const key = await deriveKey(getSecureChatPassword(), salt);
-  const payload = await encrypt(plaintext, key, salt, options?.burnAfterRead);
+  if (!globalThis.crypto?.subtle) {
+    throw new SecureChatError("SECURE_CHAT_UNAVAILABLE");
+  }
+
+  const session = await ensureConversationSession(conversation);
+  const payload = await encryptWithSharedKey(
+    plaintext,
+    readSessionKeyBytes(session),
+    options?.burnAfterRead,
+  );
   return JSON.stringify(payload);
 }
 
@@ -230,8 +187,12 @@ export async function decryptMessage(message: MessageItem): Promise<string | nul
     return null;
   }
 
-  const key = await deriveKey(getSecureChatPassword(), fromBase64(payload.salt));
-  return decrypt(payload, key);
+  const session = await getMessageSessionKey(message);
+  if (!session) {
+    throw new SecureSessionError("SECURE_SESSION_NOT_READY");
+  }
+
+  return decryptWithSharedKey(payload, readSessionKeyBytes(session));
 }
 
 export const isSecureTextMessage = (message: MessageItem) =>

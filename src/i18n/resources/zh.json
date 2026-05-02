@@ -116,7 +116,11 @@
     "fileTypeError": "不支持的文件类型或文件夹！",
     "secureChatMissingConfig": "未配置端到端加密密钥，请在 .env 中设置 VITE_E2EE_PSK。",
     "secureMessageBlocked": "消息包含不合规内容，已被本地安全策略拦截",
-    "secureChatUnavailable": "当前环境不支持 WebCrypto，无法启用端到端加密。"
+    "secureChatUnavailable": "当前环境不支持 WebCrypto，无法启用端到端加密。",
+    "secureSessionGroupUnsupported": "当前演示版密钥协商仅支持单聊。",
+    "secureSessionPendingIdentity": "已发送安全身份卡，请等待对方打开会话后重试。",
+    "secureSessionPeerKeyChanged": "对方安全身份已变化，请重新确认后再建立安全会话。",
+    "secureSessionNotReady": "当前安全会话尚未就绪，请稍后重试。"
   },
   "placeholder": {
     "conversation": "会话",
@@ -376,6 +380,8 @@
     "typing": "正在输入",
     "encryptedSession": "当前会话已加密",
     "secureDecryptFailed": "解密失败",
+    "secureSessionPreparing": "安全会话准备中",
+    "secureSessionKeyChanged": "对方安全身份已变化",
     "kick": "踢出",
     "kickMember": "踢出成员",
     "forbidLookMemberInfo": "不允许查看其他群成员资料",

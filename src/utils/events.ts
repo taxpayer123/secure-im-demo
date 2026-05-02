@@ -13,6 +13,7 @@ type EmitterEvents = {
   OPEN_CHOOSE_MODAL: ChooseModalState;
   CHAT_LIST_SCROLL_TO_BOTTOM: void;
   OPEN_RTC_MODAL: InviteData;
+  SECURE_SESSION_UPDATED: void;
   // message store
   PUSH_NEW_MSG: MessageItem;
   UPDATE_ONE_MSG: MessageItem;

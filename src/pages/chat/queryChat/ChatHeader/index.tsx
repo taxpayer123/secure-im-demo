@@ -3,7 +3,7 @@ import { SessionType } from "@openim/wasm-client-sdk";
 import { Layout, Tooltip } from "antd";
 import clsx from "clsx";
 import i18n, { t } from "i18next";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import group_member from "@/assets/images/chatHeader/group_member.png";
 import launch_group from "@/assets/images/chatHeader/launch_group.png";
@@ -11,8 +11,12 @@ import settings from "@/assets/images/chatHeader/settings.png";
 import OIMAvatar from "@/components/OIMAvatar";
 import { OverlayVisibleHandle } from "@/hooks/useOverlayVisible";
 import { useConversationStore, useUserStore } from "@/store";
-import { emit } from "@/utils/events";
-import { isSecureChatEnabled } from "@/utils/secureChat";
+import emitter, { emit } from "@/utils/events";
+import {
+  getConversationSecureStatus,
+  primeSecureConversation,
+  type SecureSessionStatus,
+} from "@/utils/secureSession";
 
 import GroupSetting from "../GroupSetting";
 import SingleSetting from "../SingleSetting";
@@ -55,17 +59,38 @@ const ChatHeader = () => {
   const inGroup = useConversationStore((state) =>
     Boolean(state.currentMemberInGroup?.groupID),
   );
+  const [secureSessionStatus, setSecureSessionStatus] =
+    useState<SecureSessionStatus>("not_ready");
 
   // locale re render
   useUserStore((state) => state.appSettings.locale);
 
   useEffect(() => {
+    let disposed = false;
     if (singleSettingRef.current?.isOverlayOpen) {
       singleSettingRef.current?.closeOverlay();
     }
     if (groupSettingRef.current?.isOverlayOpen) {
       groupSettingRef.current?.closeOverlay();
     }
+
+    const syncSecureStatus = async () => {
+      try {
+        await primeSecureConversation(currentConversation);
+      } catch {}
+
+      const status = await getConversationSecureStatus(currentConversation);
+      if (!disposed) {
+        setSecureSessionStatus(status);
+      }
+    };
+
+    void syncSecureStatus();
+    emitter.on("SECURE_SESSION_UPDATED", syncSecureStatus);
+    return () => {
+      disposed = true;
+      emitter.off("SECURE_SESSION_UPDATED", syncSecureStatus);
+    };
   }, [currentConversation?.conversationID]);
 
   const menuClick = (idx: number) => {
@@ -93,8 +118,12 @@ const ChatHeader = () => {
 
   const isSingleSession = currentConversation?.conversationType === SessionType.Single;
   const isGroupSession = currentConversation?.conversationType === SessionType.Group;
-  const secureChatEnabled =
-    Boolean(currentConversation?.conversationID) && isSecureChatEnabled();
+  const showReadyBadge = secureSessionStatus === "ready";
+  const showPendingBadge =
+    isSingleSession &&
+    (secureSessionStatus === "identity_pending" ||
+      secureSessionStatus === "not_ready");
+  const showRiskBadge = secureSessionStatus === "peer_key_changed";
 
   return (
     <Layout.Header className="relative border-b border-b-[var(--gap-text)] !bg-white !px-3">
@@ -120,10 +149,22 @@ const ChatHeader = () => {
                   <span>{currentGroupInfo?.memberCount}</span>
                 </div>
               )}
-              {secureChatEnabled && (
+              {showReadyBadge && (
                 <span className="inline-flex items-center gap-1 rounded bg-[#f6ffed] px-2 py-0.5 text-[#389e0d]">
                   <SafetyCertificateFilled />
                   <span>{t("placeholder.encryptedSession")}</span>
+                </span>
+              )}
+              {showPendingBadge && (
+                <span className="inline-flex items-center gap-1 rounded bg-[#fff7e6] px-2 py-0.5 text-[#d46b08]">
+                  <SafetyCertificateFilled />
+                  <span>{t("placeholder.secureSessionPreparing")}</span>
+                </span>
+              )}
+              {showRiskBadge && (
+                <span className="inline-flex items-center gap-1 rounded bg-[#fff1f0] px-2 py-0.5 text-[#cf1322]">
+                  <SafetyCertificateFilled />
+                  <span>{t("placeholder.secureSessionKeyChanged")}</span>
                 </span>
               )}
             </div>

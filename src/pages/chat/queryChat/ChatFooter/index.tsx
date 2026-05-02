@@ -7,6 +7,7 @@ import CKEditor from "@/components/CKEditor";
 import { getCleanText } from "@/components/CKEditor/utils";
 import i18n from "@/i18n";
 import { IMSDK } from "@/layout/MainContentWrap";
+import { useConversationStore } from "@/store";
 import { feedbackToast } from "@/utils/common";
 import {
   encryptMessage,
@@ -31,6 +32,7 @@ i18n.on("languageChanged", () => {
 const ChatFooter: ForwardRefRenderFunction<unknown, unknown> = (_, ref) => {
   const [html, setHtml] = useState("");
   const latestHtml = useLatest(html);
+  const currentConversation = useConversationStore((state) => state.currentConversation);
 
   const { getImageMessage } = useFileMessage();
   const { sendMessage } = useSendMessage();
@@ -44,7 +46,7 @@ const ChatFooter: ForwardRefRenderFunction<unknown, unknown> = (_, ref) => {
     if (!cleanText) return;
 
     try {
-      const secureContent = await encryptMessage(cleanText);
+      const secureContent = await encryptMessage(cleanText, currentConversation);
       const message = (await IMSDK.createTextMessage(secureContent)).data;
       const displayMessage = await normalizeMessageForRender(message);
       setHtml("");

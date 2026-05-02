@@ -28,6 +28,7 @@ import { useContactStore } from "@/store/contact";
 import { feedbackToast } from "@/utils/common";
 import { initStore } from "@/utils/imCommon";
 import { normalizeMessageForRender } from "@/utils/secureChat";
+import { handleSecureControlMessage } from "@/utils/secureSession";
 import { clearIMProfile, getIMToken, getIMUserID } from "@/utils/storage";
 
 import { IMSDK } from "./MainContentWrap";
@@ -280,6 +281,10 @@ export function useGlobalEvent() {
   const notPushType = [MessageType.TypingMessage, MessageType.RevokeMessage];
 
   const handleNewMessage = async (newServerMsg: MessageItem) => {
+    if (await handleSecureControlMessage(newServerMsg)) {
+      return;
+    }
+
     if (newServerMsg.contentType === MessageType.CustomMessage) {
       const customData = JSON.parse(newServerMsg.customElem!.data);
       if (

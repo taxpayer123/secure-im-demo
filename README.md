@@ -1,36 +1,65 @@
 # OpenIM Electron Demo
 
-This project is a secondary development based on the `open-im-sdk` / OpenIM Electron demo.  
-The goal is to keep the existing IM capability and add client-side security enhancements on top of it, with the current focus on an E2EE prototype.
+本项目基于 `open-im-sdk` / OpenIM Electron Demo 二次开发。  
+目标是在保留现有即时通讯能力的基础上，增加客户端侧安全增强，目前重点是实现文本消息的端到端加密原型。
 
-## Project Overview
+## 项目介绍
 
-- Base project: OpenIM Electron demo
-- Development direction: client-side security hardening
-- Current focus: end-to-end encrypted chat flow for text messages
-- Core principle: keep encryption logic in the renderer/client side and avoid changes to the OpenIM SDK or server
+- 基础项目：OpenIM Electron Demo
+- 开发方向：客户端安全加固
+- 当前重点：文本消息端到端加密链路
+- 核心原则：加密逻辑只放在客户端，不修改 OpenIM SDK 和服务端
 
-## Progress Plan
+## 当前实现的密钥共享方案
 
-1. Baseline integration
-   - Reuse the existing OpenIM login, conversation, and message flow
-   - Keep the current UI and interaction model stable
+当前版本已从“全局预共享口令”切换到“单聊会话密钥”方案，定位为演示可用级别：
 
-2. E2EE prototype
-   - Add client-side message encryption and decryption
-   - Standardize secure payload format
-   - Add local sensitive-word filtering before sending
+- 首次本地生成长期身份密钥
+  - `ECDH P-256`：用于协商会话密钥
+  - `ECDSA P-256`：用于签名身份卡和会话邀请
+- 单聊首次建立安全会话时，通过 OpenIM 自定义消息交换两类控制消息
+  - `secure_identity_v1`：交换身份公钥与指纹
+  - `secure_session_invite_v1`：发送加密后的会话密钥
+- 文本消息仍使用 `AES-256-GCM` 加密，但密钥来源改为“当前单聊会话的本地会话密钥”
+- 当前采用 `TOFU`（首次见即信任）思路
+  - 首次收到对方身份时本地记录指纹
+  - 若后续检测到对方身份指纹变化，则停止沿用旧会话并提示风险
 
-3. Security UI
-   - Show encrypted-session status in the chat header
-   - Add clear feedback for blocked or failed secure messages
+## 当前进展
 
-4. Hardening and extension
-   - Improve key handling and session management
-   - Expand support to more message types if needed
-   - Add optional protections such as screen-capture prevention or burn-after-read
+- 已完成
+  - 单聊文本消息的客户端密钥协商与会话密钥存储
+  - 握手控制消息的收发与隐藏处理
+  - 会话头部安全状态提示
+  - 发送前本地敏感词过滤
+- 当前边界
+  - 密钥协商仅支持单聊，群聊尚未接入该方案
+  - 当前为演示级实现，未实现双棘轮等生产级前向保密机制
+  - 身份校验采用 TOFU，后续可继续补扫码/指纹比对界面
 
-## Notes
+## 进度规划
 
-- This repository is an application-level enhancement project, not a fork of the OpenIM SDK itself.
-- The current implementation is designed for prototype and coursework scenarios first, then iterative hardening later.
+1. 基线接入
+   - 复用现有的登录、会话和消息收发流程
+   - 尽量保持原有界面和交互稳定
+
+2. E2EE 原型
+   - 在客户端完成消息加密和解密
+   - 统一安全消息载荷格式
+   - 将单聊密钥管理从全局口令升级为会话密钥
+   - 发送前增加本地敏感词过滤
+
+3. 安全提示
+   - 在聊天头部显示安全会话状态
+   - 对拦截消息、身份未就绪、身份变化和解密失败给出明确提示
+
+4. 后续增强
+   - 增加指纹校验 / 扫码绑定界面
+   - 按需要扩展到群聊和更多消息类型
+   - 引入更强的会话轮换与前向保密机制
+   - 增加防截屏、阅后即焚等可选安全能力
+
+## 说明
+
+- 这是一个应用层增强项目，不是对 OpenIM SDK 的直接修改。
+- 当前实现优先面向原型验证和课程设计展示，后续再逐步加固。
