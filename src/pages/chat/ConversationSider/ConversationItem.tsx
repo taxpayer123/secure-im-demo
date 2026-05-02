@@ -1,16 +1,18 @@
 import type {
-  ConversationItem,
   ConversationItem as ConversationItemType,
   MessageItem,
 } from "@openim/wasm-client-sdk/lib/types/entity";
 import { Badge } from "antd";
 import clsx from "clsx";
 import { t } from "i18next";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import OIMAvatar from "@/components/OIMAvatar";
-import { useConversationStore, useUserStore } from "@/store";
+import { useConversationStore } from "@/store";
+import emitter from "@/utils/events";
 import { formatConversionTime, getConversationContent } from "@/utils/imCommon";
+import { normalizeMessageForRender } from "@/utils/secureChat";
+import { isSecureControlMessage } from "@/utils/secureSession";
 
 import styles from "./conversation-item.module.scss";
 
@@ -24,7 +26,7 @@ const ConversationItem = ({ isActive, conversation }: IConversationProps) => {
   const updateCurrentConversation = useConversationStore(
     (state) => state.updateCurrentConversation,
   );
-  const currentUser = useUserStore((state) => state.selfInfo.userID);
+  const [latestMessageContent, setLatestMessageContent] = useState("");
 
   const toSpecifiedConversation = async () => {
     if (isActive) {
@@ -34,20 +36,45 @@ const ConversationItem = ({ isActive, conversation }: IConversationProps) => {
     navigate(`/chat/${conversation.conversationID}`);
   };
 
-  const latestMessageContent = useMemo(() => {
-    let content = "";
-    if (!conversation.latestMsg) {
-      return "";
-    }
-    try {
-      content = getConversationContent(
-        JSON.parse(conversation.latestMsg) as MessageItem,
-      );
-    } catch (error) {
-      content = t("messageDescription.catchMessage");
-    }
-    return content;
-  }, [conversation.draftText, conversation.latestMsg, isActive, currentUser]);
+  useEffect(() => {
+    let disposed = false;
+
+    const syncLatestMessageContent = async () => {
+      let content = "";
+
+      if (!conversation.latestMsg) {
+        if (!disposed) {
+          setLatestMessageContent("");
+        }
+        return;
+      }
+
+      try {
+        const latestMessage = JSON.parse(conversation.latestMsg) as MessageItem;
+        if (isSecureControlMessage(latestMessage)) {
+          content = t("placeholder.secureSessionPreparing");
+        } else {
+          content = getConversationContent(
+            await normalizeMessageForRender(latestMessage),
+          );
+        }
+      } catch {
+        content = t("messageDescription.catchMessage");
+      }
+
+      if (!disposed) {
+        setLatestMessageContent(content);
+      }
+    };
+
+    void syncLatestMessageContent();
+    emitter.on("SECURE_SESSION_UPDATED", syncLatestMessageContent);
+
+    return () => {
+      disposed = true;
+      emitter.off("SECURE_SESSION_UPDATED", syncLatestMessageContent);
+    };
+  }, [conversation.latestMsg, conversation.conversationID]);
 
   const latestMessageTime = formatConversionTime(conversation.latestMsgSendTime);
 
