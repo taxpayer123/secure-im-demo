@@ -1,10 +1,12 @@
-import { Button, Form, Input, QRCode, Select, Space, Tabs } from "antd";
+import { Button, Form, Input, Modal, Select, Space, Tabs } from "antd";
 import { t } from "i18next";
 import md5 from "md5";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useLogin, useSendSms } from "@/api/login";
+import { feedbackToast } from "@/utils/common";
+import { hasEnabledMfa, verifyUserMfaCode } from "@/utils/mfa";
 import {
   getEmail,
   getPhoneNumber,
@@ -30,6 +32,12 @@ type LoginFormProps = {
   updateLoginMethod: (method: "phone" | "email") => void;
 };
 
+type LoginProfile = {
+  chatToken: string;
+  imToken: string;
+  userID: string;
+};
+
 const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormProps) => {
   const navigate = useNavigate();
   const [form] = Form.useForm();
@@ -38,6 +46,10 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
   const { mutate: semdSms } = useSendSms();
 
   const [countdown, setCountdown] = useState(0);
+  const [pendingProfile, setPendingProfile] = useState<LoginProfile | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaVerifying, setMfaVerifying] = useState(false);
+
   useEffect(() => {
     if (countdown > 0) {
       const timer = setTimeout(() => {
@@ -52,6 +64,11 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
     }
   }, [countdown]);
 
+  const completeLogin = (profile: LoginProfile) => {
+    setIMProfile(profile);
+    navigate("/chat");
+  };
+
   const onFinish = (params: API.Login.LoginParams) => {
     if (loginType === 0) {
       params.password = md5(params.password ?? "");
@@ -64,20 +81,45 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
       setEmail(params.email);
     }
     login(params, {
-      onSuccess: (data) => {
+      onSuccess: async (data) => {
         const { chatToken, imToken, userID } = data.data;
-        setIMProfile({ chatToken, imToken, userID });
-        navigate("/chat");
+        const profile = { chatToken, imToken, userID };
+        if (await hasEnabledMfa(userID)) {
+          setPendingProfile(profile);
+          setMfaCode("");
+          return;
+        }
+        completeLogin(profile);
       },
     });
   };
 
+  const verifyMfaHandle = async () => {
+    if (!pendingProfile) return;
+    setMfaVerifying(true);
+    try {
+      const verified = await verifyUserMfaCode(pendingProfile.userID, mfaCode);
+      if (!verified) {
+        feedbackToast({ error: new Error(t("toast.mfaCodeInvalid")) });
+        return;
+      }
+      completeLogin(pendingProfile);
+    } finally {
+      setMfaVerifying(false);
+    }
+  };
+
+  const cancelMfaHandle = () => {
+    setPendingProfile(null);
+    setMfaCode("");
+  };
+
   const sendSmsHandle = () => {
-    const options = {
-      phoneNumber: form.getFieldValue("phoneNumber"),
-      email: form.getFieldValue("email"),
-      areaCode: form.getFieldValue("areaCode"),
-      usedFor: 3,
+    const options: Partial<API.Login.SendSmsParams> = {
+      phoneNumber: form.getFieldValue("phoneNumber") as string,
+      email: form.getFieldValue("email") as string,
+      areaCode: form.getFieldValue("areaCode") as string,
+      usedFor: 3 as API.Login.UsedFor,
     };
     if (loginMethod === "phone") {
       delete options.email;
@@ -87,7 +129,7 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
       delete options.areaCode;
     }
 
-    semdSms(options, {
+    semdSms(options as API.Login.SendSmsParams, {
       onSuccess() {
         setCountdown(60);
       },
@@ -209,6 +251,43 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
           </span>
         </div>
       </Form>
+      <Modal
+        title={t("placeholder.mfaVerifyTitle")}
+        open={Boolean(pendingProfile)}
+        onCancel={cancelMfaHandle}
+        footer={[
+          <Button key="cancel" onClick={cancelMfaHandle}>
+            {t("cancel")}
+          </Button>,
+          <Button
+            key="verify"
+            type="primary"
+            loading={mfaVerifying}
+            disabled={mfaCode.length !== 6}
+            onClick={() => {
+              void verifyMfaHandle();
+            }}
+          >
+            {t("confirm")}
+          </Button>,
+        ]}
+        destroyOnClose
+      >
+        <div className="mb-4 text-sm text-gray-500">
+          {t("placeholder.mfaLoginDesc")}
+        </div>
+        <Input
+          autoFocus
+          maxLength={6}
+          value={mfaCode}
+          inputMode="numeric"
+          placeholder={t("placeholder.mfaInputCode")}
+          onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onPressEnter={() => {
+            void verifyMfaHandle();
+          }}
+        />
+      </Modal>
     </>
   );
 };
