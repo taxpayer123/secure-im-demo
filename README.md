@@ -28,6 +28,9 @@
 ## MFA 多因子认证方案
 [mfa.md](docs/ai/mfa.md)
 
+## Passkey 认证方案
+[passkey.md](docs/ai/passkey.md)
+
 ## 当前进展
 
 - 已完成

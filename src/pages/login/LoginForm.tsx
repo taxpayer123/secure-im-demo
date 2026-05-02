@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useLogin, useSendSms } from "@/api/login";
 import { feedbackToast } from "@/utils/common";
 import { hasEnabledMfa, verifyUserMfaCode } from "@/utils/mfa";
+import { hasEnabledPasskey, verifyUserPasskey } from "@/utils/passkey";
 import {
   getEmail,
   getPhoneNumber,
@@ -47,6 +48,9 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
 
   const [countdown, setCountdown] = useState(0);
   const [pendingProfile, setPendingProfile] = useState<LoginProfile | null>(null);
+  const [pendingPasskeyProfile, setPendingPasskeyProfile] =
+    useState<LoginProfile | null>(null);
+  const [passkeyVerifying, setPasskeyVerifying] = useState(false);
   const [mfaCode, setMfaCode] = useState("");
   const [mfaVerifying, setMfaVerifying] = useState(false);
 
@@ -84,7 +88,17 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
       onSuccess: async (data) => {
         const { chatToken, imToken, userID } = data.data;
         const profile = { chatToken, imToken, userID };
-        if (await hasEnabledMfa(userID)) {
+        const [needsPasskey, needsMfa] = await Promise.all([
+          hasEnabledPasskey(userID),
+          hasEnabledMfa(userID),
+        ]);
+
+        if (needsPasskey) {
+          setPendingPasskeyProfile(profile);
+          setMfaCode("");
+          return;
+        }
+        if (needsMfa) {
           setPendingProfile(profile);
           setMfaCode("");
           return;
@@ -92,6 +106,29 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
         completeLogin(profile);
       },
     });
+  };
+
+  const verifyPasskeyHandle = async () => {
+    if (!pendingPasskeyProfile) return;
+    setPasskeyVerifying(true);
+    try {
+      const verified = await verifyUserPasskey(pendingPasskeyProfile.userID);
+      if (!verified) {
+        feedbackToast({ error: new Error(t("toast.passkeyVerifyFailed")) });
+        return;
+      }
+
+      const profile = pendingPasskeyProfile;
+      setPendingPasskeyProfile(null);
+      completeLogin(profile);
+    } catch (error) {
+      feedbackToast({
+        error:
+          error instanceof Error ? error : new Error(t("toast.passkeyVerifyFailed")),
+      });
+    } finally {
+      setPasskeyVerifying(false);
+    }
   };
 
   const verifyMfaHandle = async () => {
@@ -107,6 +144,10 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
     } finally {
       setMfaVerifying(false);
     }
+  };
+
+  const cancelPasskeyHandle = () => {
+    setPendingPasskeyProfile(null);
   };
 
   const cancelMfaHandle = () => {
@@ -251,6 +292,29 @@ const LoginForm = ({ loginMethod, setFormType, updateLoginMethod }: LoginFormPro
           </span>
         </div>
       </Form>
+      <Modal
+        title={t("placeholder.passkeyVerifyTitle")}
+        open={Boolean(pendingPasskeyProfile)}
+        onCancel={cancelPasskeyHandle}
+        footer={[
+          <Button key="cancel" onClick={cancelPasskeyHandle}>
+            {t("cancel")}
+          </Button>,
+          <Button
+            key="verify"
+            type="primary"
+            loading={passkeyVerifying}
+            onClick={() => {
+              void verifyPasskeyHandle();
+            }}
+          >
+            {t("placeholder.verifyPasskey")}
+          </Button>,
+        ]}
+        destroyOnClose
+      >
+        <div className="text-sm text-gray-500">{t("placeholder.passkeyLoginDesc")}</div>
+      </Modal>
       <Modal
         title={t("placeholder.mfaVerifyTitle")}
         open={Boolean(pendingProfile)}

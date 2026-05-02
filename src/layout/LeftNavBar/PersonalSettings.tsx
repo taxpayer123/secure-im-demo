@@ -23,6 +23,14 @@ import {
   setMfaRecord,
   verifyTotp,
 } from "@/utils/mfa";
+import {
+  getPasskeyRecord,
+  isPasskeySupported,
+  PasskeyRecord,
+  registerUserPasskey,
+  removePasskeyRecord,
+  verifyUserPasskey,
+} from "@/utils/passkey";
 
 import { OverlayVisibleHandle, useOverlayVisible } from "../../hooks/useOverlayVisible";
 import BlackList from "./BlackList";
@@ -72,11 +80,17 @@ export const PersonalSettingsContent = ({
   const backListRef = useRef<OverlayVisibleHandle>(null);
   const [mfaOpen, setMfaOpen] = useState(false);
   const [mfaEnabled, setMfaEnabled] = useState(false);
+  const [passkeyOpen, setPasskeyOpen] = useState(false);
+  const [passkeyEnabled, setPasskeyEnabled] = useState(false);
 
   useEffect(() => {
     if (!selfInfo?.userID) return;
-    getMfaRecord(selfInfo.userID).then((record) => {
-      setMfaEnabled(Boolean(record?.enabled));
+    Promise.all([
+      getMfaRecord(selfInfo.userID),
+      getPasskeyRecord(selfInfo.userID),
+    ]).then(([mfaRecord, passkeyRecord]) => {
+      setMfaEnabled(Boolean(mfaRecord?.enabled));
+      setPasskeyEnabled(Boolean(passkeyRecord?.enabled));
     });
   }, [selfInfo?.userID]);
 
@@ -117,6 +131,13 @@ export const PersonalSettingsContent = ({
         account={accountLabel}
         onClose={() => setMfaOpen(false)}
         onStatusChange={setMfaEnabled}
+      />
+      <PasskeySettingsModal
+        open={passkeyOpen}
+        userID={selfInfo.userID}
+        account={accountLabel}
+        onClose={() => setPasskeyOpen(false)}
+        onStatusChange={setPasskeyEnabled}
       />
       <div className="app-drag flex items-center justify-between bg-[var(--gap-text)] p-5">
         <span className="text-base font-medium">{t("placeholder.accountSetting")}</span>
@@ -177,6 +198,21 @@ export const PersonalSettingsContent = ({
         <Divider className="m-0 border-4 border-[var(--gap-text)]" />
         <div
           className="flex cursor-pointer items-center justify-between px-6 py-4"
+          onClick={() => setPasskeyOpen(true)}
+        >
+          <div>
+            <div className="text-base font-medium">{t("placeholder.passkeyTitle")}</div>
+            <div className="mt-1 text-xs text-gray-400">
+              {passkeyEnabled
+                ? t("placeholder.passkeyStatusEnabled")
+                : t("placeholder.passkeyStatusDisabled")}
+            </div>
+          </div>
+          <RightOutlined rev={undefined} />
+        </div>
+        <Divider className="m-0 border-4 border-[var(--gap-text)]" />
+        <div
+          className="flex cursor-pointer items-center justify-between px-6 py-4"
           onClick={() => setMfaOpen(true)}
         >
           <div>
@@ -200,6 +236,127 @@ export const PersonalSettingsContent = ({
         <Divider className="m-0 border-4 border-[var(--gap-text)]" />
       </div>
     </div>
+  );
+};
+
+const PasskeySettingsModal = ({
+  account,
+  onClose,
+  onStatusChange,
+  open,
+  userID,
+}: {
+  account: string;
+  onClose: () => void;
+  onStatusChange: (enabled: boolean) => void;
+  open: boolean;
+  userID: string;
+}) => {
+  const [record, setRecord] = useState<PasskeyRecord | null>(null);
+  const [supported, setSupported] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || !userID) return;
+
+    Promise.all([getPasskeyRecord(userID), isPasskeySupported()]).then(
+      ([storedRecord, passkeySupported]) => {
+        setRecord(storedRecord);
+        setSupported(passkeySupported);
+      },
+    );
+  }, [open, userID]);
+
+  const enablePasskey = async () => {
+    if (!userID) return;
+
+    setLoading(true);
+    try {
+      await registerUserPasskey(userID, account);
+      const nextRecord = await getPasskeyRecord(userID);
+      setRecord(nextRecord);
+      onStatusChange(true);
+      feedbackToast({ msg: t("toast.passkeyEnabled") });
+    } catch (error) {
+      feedbackToast({
+        error:
+          error instanceof Error ? error : new Error(t("toast.passkeyRegisterFailed")),
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const disablePasskey = async () => {
+    if (!record || !userID) return;
+
+    setLoading(true);
+    try {
+      const verified = await verifyUserPasskey(userID);
+      if (!verified) {
+        feedbackToast({ error: new Error(t("toast.passkeyVerifyFailed")) });
+        return;
+      }
+      await removePasskeyRecord(userID);
+      setRecord(null);
+      onStatusChange(false);
+      feedbackToast({ msg: t("toast.passkeyDisabled") });
+    } catch (error) {
+      feedbackToast({
+        error:
+          error instanceof Error ? error : new Error(t("toast.passkeyVerifyFailed")),
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={t("placeholder.passkeyTitle")}
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      destroyOnClose
+    >
+      {record?.enabled ? (
+        <>
+          <div className="mb-4 text-sm text-gray-500">
+            {t("placeholder.passkeyDisableDesc")}
+          </div>
+          <Button
+            danger
+            block
+            loading={loading}
+            disabled={!supported}
+            onClick={() => {
+              void disablePasskey();
+            }}
+          >
+            {t("placeholder.disablePasskey")}
+          </Button>
+        </>
+      ) : (
+        <>
+          <div className="mb-4 text-sm text-gray-500">
+            {supported
+              ? t("placeholder.passkeySetupDesc")
+              : t("placeholder.passkeyUnsupported")}
+          </div>
+          <Button
+            type="primary"
+            block
+            loading={loading}
+            disabled={!supported}
+            onClick={() => {
+              void enablePasskey();
+            }}
+          >
+            {t("placeholder.enablePasskey")}
+          </Button>
+        </>
+      )}
+    </Modal>
   );
 };
 
