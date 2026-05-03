@@ -1,24 +1,60 @@
 # E2EE Flow
 
-## 发送流程
+## Session Negotiation
 
+```text
+ensureConversationSession(peer)
+  -> get activeSessionId
+  -> found active session: reuse session key
+  -> missing active session:
+       create sessionId
+       create sessionKey
+       send secure_session_invite_v2(sessionId, wrappedSessionKey)
+       save session as active
+```
+
+On reset:
+
+```text
+mark all local sessions inactive
+clear activeSessionId
+create a new sessionId + sessionKey
+send secure_session_invite_v2
+set the new session active
+```
+
+## Send Flow
+
+```text
 UserInput
- → validateSensitiveWords(text)
- → encryptMessage(text)
- → openim.createTextMessage(ciphertext)
- → openim.sendMessage()
+  -> validateSensitiveWords(text)
+  -> get active session
+  -> encryptMessage(text, activeSession.sessionKey)
+  -> payload.sessionId = activeSession.sessionId
+  -> openim.createTextMessage(JSON.stringify(payload))
+  -> openim.sendMessage()
+```
 
-## 接收流程
+## Receive Flow
 
+```text
 onRecvNewMessages(msg)
- → if isSecurePayload(msg):
-        plaintext = decryptMessage(msg)
-        render(plaintext)
-   else:
-        render(msg)
+  -> if secure_session_invite_v2:
+       decrypt wrappedSessionKey
+       save session under payload.sessionId
+       set as active session when newer than the current active session
+       stop rendering control message
+  -> if secure_text_v1:
+       read payload.sessionId
+       get session key by sessionId
+       found: decrypt and render plaintext
+       missing: render "缺少历史会话密钥，无法解密"
+  -> else:
+       render(msg)
+```
 
-## 错误处理
+## Error Handling
 
-如果解密失败：
-- UI显示："解密失败"
-- 不抛异常
+- Missing historical session key: render `缺少历史会话密钥，无法解密`.
+- Decrypt failure with an existing key: render `解密失败`.
+- Secure control messages are not rendered in the chat list.

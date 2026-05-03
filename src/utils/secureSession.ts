@@ -28,7 +28,7 @@ localForage.config({
 });
 
 const SECURE_IDENTITY_VERSION = "secure_identity_v1";
-const SECURE_SESSION_VERSION = "secure_session_invite_v1";
+const SECURE_SESSION_VERSION = "secure_session_invite_v2";
 const WRAP_INFO = "openim-secure-session-wrap-v1";
 const WRAP_SALT_LENGTH = 16;
 const WRAP_IV_LENGTH = 12;
@@ -66,14 +66,23 @@ type PeerIdentityRecord = {
 };
 
 type SessionRecord = {
+  sessionId: string;
   conversationKey: string;
   peerUserID: string;
   peerFingerprint: string;
   sessionKey: string;
+  active: boolean;
   createdByUserID?: string;
   inviteTimestamp?: number;
   createdAt: number;
   updatedAt: number;
+};
+
+type ConversationSessionRecord = {
+  conversationKey: string;
+  peerUserID: string;
+  activeSessionId?: string;
+  sessions: Record<string, SessionRecord>;
 };
 
 type SecureIdentityPayload = {
@@ -89,7 +98,8 @@ type SecureIdentityPayload = {
 };
 
 type SecureSessionInvitePayload = {
-  type: "secure_session_invite_v1";
+  type: "secure_session_invite_v1" | "secure_session_invite_v2";
+  sessionId?: string;
   userID: string;
   fingerprint: string;
   ephemeralPublicKey: JsonWebKey;
@@ -107,6 +117,7 @@ export class SecureSessionError extends Error {
       | "SECURE_SESSION_PENDING_IDENTITY"
       | "SECURE_SESSION_PEER_KEY_CHANGED"
       | "SECURE_SESSION_NOT_READY"
+      | "SECURE_SESSION_MISSING_KEY"
       | "SECURE_SESSION_CRYPTO_UNAVAILABLE",
   ) {
     super(code);
@@ -116,6 +127,13 @@ export class SecureSessionError extends Error {
 
 const getConversationKey = (userID: string, peerUserID: string) =>
   `single:${[userID, peerUserID].sort().join(":")}`;
+
+const toBase64Url = (bytes: Uint8Array) =>
+  toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+const createSessionId = () => `sess_${toBase64Url(randomBytes(16))}`;
+
+const getLegacySessionId = (conversationKey: string) => `legacy_${conversationKey}`;
 
 const buildIdentitySigningText = (payload: Omit<SecureIdentityPayload, "signature">) =>
   JSON.stringify({
@@ -134,6 +152,7 @@ const buildSessionSigningText = (
 ) =>
   JSON.stringify({
     type: payload.type,
+    ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
     userID: payload.userID,
     fingerprint: payload.fingerprint,
     ephemeralPublicKey: payload.ephemeralPublicKey,
@@ -144,27 +163,74 @@ const buildSessionSigningText = (
   });
 
 const getStoredPeerIdentities = async () =>
-  (await localForage.getItem<Record<string, PeerIdentityRecord>>(PEER_IDENTITY_KEY)) ?? {};
+  (await localForage.getItem<Record<string, PeerIdentityRecord>>(PEER_IDENTITY_KEY)) ??
+  {};
 
-const getStoredSessions = async () =>
-  (await localForage.getItem<Record<string, SessionRecord>>(SESSION_STORE_KEY)) ?? {};
+const normalizeSessionStoreRecord = (
+  conversationKey: string,
+  record: ConversationSessionRecord | SessionRecord,
+): ConversationSessionRecord => {
+  if ("sessions" in record) {
+    return record;
+  }
+
+  const sessionId = record.sessionId || getLegacySessionId(conversationKey);
+  return {
+    conversationKey,
+    peerUserID: record.peerUserID,
+    activeSessionId: sessionId,
+    sessions: {
+      [sessionId]: {
+        ...record,
+        sessionId,
+        conversationKey,
+        active: true,
+      },
+    },
+  };
+};
+
+const getStoredSessions = async () => {
+  const records =
+    (await localForage.getItem<
+      Record<string, ConversationSessionRecord | SessionRecord>
+    >(SESSION_STORE_KEY)) ?? {};
+
+  return Object.entries(records).reduce<Record<string, ConversationSessionRecord>>(
+    (sessionStores, [conversationKey, record]) => ({
+      ...sessionStores,
+      [conversationKey]: normalizeSessionStoreRecord(conversationKey, record),
+    }),
+    {},
+  );
+};
 
 const savePeerIdentities = async (records: Record<string, PeerIdentityRecord>) =>
   localForage.setItem(PEER_IDENTITY_KEY, records);
 
-const saveSessions = async (records: Record<string, SessionRecord>) =>
+const saveSessions = async (records: Record<string, ConversationSessionRecord>) =>
   localForage.setItem(SESSION_STORE_KEY, records);
 
 const resolveSelfUserID = async () =>
   useUserStore.getState().selfInfo.userID || ((await getIMUserID()) as string) || "";
 
 const importAgreementPrivateKey = async (jwk: JsonWebKey) =>
-  getSubtleCrypto().importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, [
-    "deriveBits",
-  ]);
+  getSubtleCrypto().importKey(
+    "jwk",
+    jwk,
+    { name: "ECDH", namedCurve: "P-256" },
+    false,
+    ["deriveBits"],
+  );
 
 const importAgreementPublicKey = async (jwk: JsonWebKey) =>
-  getSubtleCrypto().importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  getSubtleCrypto().importKey(
+    "jwk",
+    jwk,
+    { name: "ECDH", namedCurve: "P-256" },
+    false,
+    [],
+  );
 
 const importSigningPrivateKey = async (jwk: JsonWebKey) =>
   getSubtleCrypto().importKey(
@@ -297,8 +363,12 @@ const storePeerIdentity = async (payload: SecureIdentityPayload) => {
   if (current && current.fingerprint !== payload.fingerprint) {
     const sessions = await getStoredSessions();
     Object.keys(sessions).forEach((conversationKey) => {
-      if (sessions[conversationKey].peerUserID === payload.userID) {
-        delete sessions[conversationKey];
+      const sessionStore = sessions[conversationKey];
+      if (sessionStore.peerUserID === payload.userID) {
+        sessionStore.activeSessionId = undefined;
+        Object.values(sessionStore.sessions).forEach((session) => {
+          session.active = false;
+        });
       }
     });
     await saveSessions(sessions);
@@ -376,7 +446,10 @@ export const ensureLocalIdentity = async () => {
   );
 
   const agreementPublicKey = await subtle.exportKey("jwk", agreementKeyPair.publicKey);
-  const agreementPrivateKey = await subtle.exportKey("jwk", agreementKeyPair.privateKey);
+  const agreementPrivateKey = await subtle.exportKey(
+    "jwk",
+    agreementKeyPair.privateKey,
+  );
   const signingPublicKey = await subtle.exportKey("jwk", signingKeyPair.publicKey);
   const signingPrivateKey = await subtle.exportKey("jwk", signingKeyPair.privateKey);
 
@@ -432,8 +505,7 @@ export const handleSecureControlMessages = async (messages: MessageItem[]) => {
     (message) => getSecureControlCustomType(message) === CustomType.SecureIdentity,
   );
   const sessionInviteMessages = messages.filter(
-    (message) =>
-      getSecureControlCustomType(message) === CustomType.SecureSessionInvite,
+    (message) => getSecureControlCustomType(message) === CustomType.SecureSessionInvite,
   );
 
   const handleControlMessage = async (message: MessageItem) => {
@@ -455,24 +527,54 @@ export const handleSecureControlMessages = async (messages: MessageItem[]) => {
 const shouldIgnoreSessionInvite = (
   existingSession: SessionRecord | undefined,
   incomingPayload: SecureSessionInvitePayload,
-  selfUserID: string,
-) => {
-  if (!existingSession) {
-    return false;
-  }
+) =>
+  Boolean(
+    existingSession?.inviteTimestamp &&
+      incomingPayload.timestamp <= existingSession.inviteTimestamp,
+  );
 
-  if (
-    existingSession.inviteTimestamp &&
-    incomingPayload.timestamp <= existingSession.inviteTimestamp
-  ) {
+const shouldActivateSessionInvite = (
+  sessionStore: ConversationSessionRecord | undefined,
+  incomingPayload: SecureSessionInvitePayload,
+) => {
+  if (!sessionStore?.activeSessionId) {
     return true;
   }
 
-  const preferredCreatorUserID = [selfUserID, incomingPayload.userID].sort()[0];
+  const activeSession = sessionStore.sessions[sessionStore.activeSessionId];
   return (
-    existingSession.createdByUserID === preferredCreatorUserID &&
-    incomingPayload.userID !== preferredCreatorUserID
+    !activeSession?.inviteTimestamp ||
+    incomingPayload.timestamp >= activeSession.inviteTimestamp
   );
+};
+
+const setActiveSession = (
+  sessionStore: ConversationSessionRecord,
+  sessionId: string,
+) => {
+  Object.values(sessionStore.sessions).forEach((session) => {
+    session.active = session.sessionId === sessionId;
+  });
+  sessionStore.activeSessionId = sessionId;
+};
+
+const getActiveSession = (sessionStore?: ConversationSessionRecord) =>
+  sessionStore?.activeSessionId
+    ? sessionStore.sessions[sessionStore.activeSessionId]
+    : undefined;
+
+const getFallbackSession = (sessionStore?: ConversationSessionRecord) => {
+  if (!sessionStore) {
+    return undefined;
+  }
+
+  const activeSession = getActiveSession(sessionStore);
+  if (activeSession) {
+    return activeSession;
+  }
+
+  const sessionList = Object.values(sessionStore.sessions);
+  return sessionList.length === 1 ? sessionList[0] : undefined;
 };
 
 export const handleSecureControlMessage = async (message: MessageItem) => {
@@ -524,6 +626,7 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
     peerIdentity.signingPublicKey,
     buildSessionSigningText({
       type: sessionPayload.type,
+      sessionId: sessionPayload.sessionId,
       userID: sessionPayload.userID,
       fingerprint: sessionPayload.fingerprint,
       ephemeralPublicKey: sessionPayload.ephemeralPublicKey,
@@ -560,23 +663,38 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
 
   const selfUserID = await resolveSelfUserID();
   const conversationKey = getConversationKey(selfUserID, sessionPayload.userID);
+  const sessionId =
+    sessionPayload.sessionId ||
+    `${getLegacySessionId(conversationKey)}_${sessionPayload.timestamp}`;
   const sessions = await getStoredSessions();
-  if (
-    shouldIgnoreSessionInvite(sessions[conversationKey], sessionPayload, selfUserID)
-  ) {
+  const sessionStore = sessions[conversationKey];
+  if (shouldIgnoreSessionInvite(sessionStore?.sessions[sessionId], sessionPayload)) {
     return true;
   }
 
-  sessions[conversationKey] = {
+  const nextSessionStore: ConversationSessionRecord = sessionStore ?? {
+    conversationKey,
+    peerUserID: sessionPayload.userID,
+    sessions: {},
+  };
+  nextSessionStore.sessions[sessionId] = {
+    sessionId,
     conversationKey,
     peerUserID: sessionPayload.userID,
     peerFingerprint: sessionPayload.fingerprint,
     sessionKey: toBase64(sessionKeyBuffer),
+    active: false,
     createdByUserID: sessionPayload.userID,
     inviteTimestamp: sessionPayload.timestamp,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+
+  if (shouldActivateSessionInvite(sessionStore, sessionPayload)) {
+    setActiveSession(nextSessionStore, sessionId);
+  }
+
+  sessions[conversationKey] = nextSessionStore;
   await saveSessions(sessions);
   emit("SECURE_SESSION_UPDATED");
   return true;
@@ -604,7 +722,7 @@ export const getConversationSecureStatus = async (
   const selfUserID = await resolveSelfUserID();
   const conversationKey = getConversationKey(selfUserID, conversation.userID);
   const sessions = await getStoredSessions();
-  return sessions[conversationKey] ? "ready" : "not_ready";
+  return getActiveSession(sessions[conversationKey]) ? "ready" : "not_ready";
 };
 
 export const getSecureSessionErrorMessage = (error: unknown) => {
@@ -621,6 +739,8 @@ export const getSecureSessionErrorMessage = (error: unknown) => {
       return t("toast.secureSessionPeerKeyChanged");
     case "SECURE_SESSION_NOT_READY":
       return t("toast.secureSessionNotReady");
+    case "SECURE_SESSION_MISSING_KEY":
+      return t("toast.secureSessionMissingKey");
     case "SECURE_SESSION_CRYPTO_UNAVAILABLE":
       return t("toast.secureChatUnavailable");
     default:
@@ -654,11 +774,13 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
 
   const conversationKey = getConversationKey(localIdentity.userID, peerUserID);
   const sessions = await getStoredSessions();
-  const existingSession = sessions[conversationKey];
-  if (existingSession && existingSession.peerFingerprint === peerIdentity.fingerprint) {
+  const existingSessionStore = sessions[conversationKey];
+  const existingSession = getActiveSession(existingSessionStore);
+  if (existingSession?.peerFingerprint === peerIdentity.fingerprint) {
     return existingSession;
   }
 
+  const sessionId = createSessionId();
   const sessionKey = randomBytes(SESSION_KEY_LENGTH);
   const subtle = getSubtleCrypto();
   const ephemeralKeyPair = await subtle.generateKey(
@@ -667,7 +789,10 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
     ["deriveBits"],
   );
   const ephemeralPublicKey = await subtle.exportKey("jwk", ephemeralKeyPair.publicKey);
-  const ephemeralPrivateKey = await subtle.exportKey("jwk", ephemeralKeyPair.privateKey);
+  const ephemeralPrivateKey = await subtle.exportKey(
+    "jwk",
+    ephemeralKeyPair.privateKey,
+  );
   const salt = randomBytes(WRAP_SALT_LENGTH);
   const wrapKey = await deriveWrapKey(
     ephemeralPrivateKey,
@@ -686,6 +811,7 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
 
   const payloadWithoutSignature: Omit<SecureSessionInvitePayload, "signature"> = {
     type: SECURE_SESSION_VERSION,
+    sessionId,
     userID: localIdentity.userID,
     fingerprint: localIdentity.fingerprint,
     ephemeralPublicKey,
@@ -703,10 +829,12 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
   };
 
   const nextSession: SessionRecord = {
+    sessionId,
     conversationKey,
     peerUserID,
     peerFingerprint: peerIdentity.fingerprint,
     sessionKey: toBase64(sessionKey),
+    active: true,
     createdByUserID: localIdentity.userID,
     inviteTimestamp: payload.timestamp,
     createdAt: Date.now(),
@@ -714,7 +842,17 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
   };
   await sendCustomSignal(peerUserID, CustomType.SecureSessionInvite, payload);
 
-  sessions[conversationKey] = nextSession;
+  const nextSessionStore: ConversationSessionRecord = existingSessionStore ?? {
+    conversationKey,
+    peerUserID,
+    sessions: {},
+  };
+  Object.values(nextSessionStore.sessions).forEach((session) => {
+    session.active = false;
+  });
+  nextSessionStore.sessions[sessionId] = nextSession;
+  nextSessionStore.activeSessionId = sessionId;
+  sessions[conversationKey] = nextSessionStore;
   await saveSessions(sessions);
   emit("SECURE_SESSION_UPDATED");
   return nextSession;
@@ -738,7 +876,13 @@ export const resetConversationSecureSession = async (
 
   const conversationKey = getConversationKey(selfUserID, peerUserID);
   const sessions = await getStoredSessions();
-  delete sessions[conversationKey];
+  const sessionStore = sessions[conversationKey];
+  if (sessionStore) {
+    sessionStore.activeSessionId = undefined;
+    Object.values(sessionStore.sessions).forEach((session) => {
+      session.active = false;
+    });
+  }
   await saveSessions(sessions);
 
   const peerIdentities = await getStoredPeerIdentities();
@@ -769,10 +913,16 @@ export const getConversationSessionKey = async (conversation?: ConversationItem)
   }
   const selfUserID = await resolveSelfUserID();
   const sessions = await getStoredSessions();
-  return sessions[getConversationKey(selfUserID, conversation.userID)] ?? null;
+  return (
+    getActiveSession(sessions[getConversationKey(selfUserID, conversation.userID)]) ??
+    null
+  );
 };
 
-export const getMessageSessionKey = async (message: MessageItem) => {
+export const getMessageSessionKey = async (
+  message: MessageItem,
+  sessionId?: string,
+) => {
   if (message.sessionType !== SessionType.Single) {
     return null;
   }
@@ -780,7 +930,13 @@ export const getMessageSessionKey = async (message: MessageItem) => {
   const selfUserID = await resolveSelfUserID();
   const peerUserID = message.sendID === selfUserID ? message.recvID : message.sendID;
   const sessions = await getStoredSessions();
-  return sessions[getConversationKey(selfUserID, peerUserID)] ?? null;
+  const sessionStore = sessions[getConversationKey(selfUserID, peerUserID)];
+  if (sessionId) {
+    return sessionStore?.sessions[sessionId] ?? null;
+  }
+
+  return getFallbackSession(sessionStore) ?? null;
 };
 
-export const readSessionKeyBytes = (session: SessionRecord) => fromBase64(session.sessionKey);
+export const readSessionKeyBytes = (session: SessionRecord) =>
+  fromBase64(session.sessionKey);

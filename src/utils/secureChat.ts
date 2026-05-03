@@ -30,6 +30,8 @@ const BLOCKED_WORDS = ["暴力", "违禁"];
 
 export type SecurePayload = {
   type: "secure_text_v1";
+  version?: 2;
+  sessionId?: string;
   alg: "AES-256-GCM";
   iv: string;
   ciphertext: string;
@@ -41,10 +43,7 @@ export type SecurePayload = {
 type SecureChatErrorCode = "SECURE_CHAT_BLOCKED_CONTENT" | "SECURE_CHAT_UNAVAILABLE";
 
 export class SecureChatError extends Error {
-  constructor(
-    public readonly code: SecureChatErrorCode,
-    message?: string,
-  ) {
+  constructor(public readonly code: SecureChatErrorCode, message?: string) {
     super(message ?? code);
     this.name = "SecureChatError";
   }
@@ -58,6 +57,8 @@ const isSecurePayload = (value: unknown): value is SecurePayload => {
   const payload = value as Record<string, unknown>;
   return (
     payload.type === SECURE_MESSAGE_TYPE &&
+    (payload.version === undefined || payload.version === 2) &&
+    (payload.version !== 2 || typeof payload.sessionId === "string") &&
     payload.alg === SECURE_MESSAGE_ALGORITHM &&
     typeof payload.iv === "string" &&
     typeof payload.ciphertext === "string" &&
@@ -91,6 +92,7 @@ const withTextContent = (message: MessageItem, content: string): MessageItem => 
 const encryptWithSharedKey = async (
   plaintext: string,
   sharedKey: Uint8Array,
+  sessionId: string,
   burnAfterRead?: boolean,
 ): Promise<SecurePayload> => {
   const subtle = getSubtleCrypto();
@@ -107,6 +109,8 @@ const encryptWithSharedKey = async (
 
   return {
     type: SECURE_MESSAGE_TYPE,
+    version: 2,
+    sessionId,
     alg: SECURE_MESSAGE_ALGORITHM,
     iv: toBase64(iv),
     ciphertext: toBase64(ciphertext),
@@ -172,6 +176,7 @@ export async function encryptMessage(
   const payload = await encryptWithSharedKey(
     plaintext,
     readSessionKeyBytes(session),
+    session.sessionId,
     options?.burnAfterRead,
   );
   return JSON.stringify(payload);
@@ -187,9 +192,11 @@ export async function decryptMessage(message: MessageItem): Promise<string | nul
     return null;
   }
 
-  const session = await getMessageSessionKey(message);
+  const session = await getMessageSessionKey(message, payload.sessionId);
   if (!session) {
-    throw new SecureSessionError("SECURE_SESSION_NOT_READY");
+    throw new SecureSessionError(
+      payload.sessionId ? "SECURE_SESSION_MISSING_KEY" : "SECURE_SESSION_NOT_READY",
+    );
   }
 
   return decryptWithSharedKey(payload, readSessionKeyBytes(session));
@@ -209,7 +216,13 @@ export async function normalizeMessageForRender(
   try {
     const plaintext = await decryptMessage(message);
     return withTextContent(message, plaintext ?? "");
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof SecureSessionError &&
+      error.code === "SECURE_SESSION_MISSING_KEY"
+    ) {
+      return withTextContent(message, t("placeholder.secureSessionMissingKey"));
+    }
     return withTextContent(message, t("placeholder.secureDecryptFailed"));
   }
 }
