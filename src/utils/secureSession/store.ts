@@ -1,0 +1,102 @@
+import * as localForage from "localforage";
+
+import { LOCAL_IDENTITY_KEY, PEER_IDENTITY_KEY, SESSION_STORE_KEY } from "./constants";
+import { getLegacySessionId } from "./crypto";
+import type {
+  ConversationSessionRecord,
+  LocalIdentityRecord,
+  PeerIdentityRecord,
+  SessionRecord,
+} from "./types";
+
+localForage.config({
+  name: "OpenCorp-Config",
+});
+
+export const getConversationKey = (userID: string, peerUserID: string) =>
+  `single:${[userID, peerUserID].sort().join(":")}`;
+
+const normalizeSessionStoreRecord = (
+  conversationKey: string,
+  record: ConversationSessionRecord | SessionRecord,
+): ConversationSessionRecord => {
+  if ("sessions" in record) {
+    return record;
+  }
+
+  const sessionId = record.sessionId || getLegacySessionId(conversationKey);
+  return {
+    conversationKey,
+    peerUserID: record.peerUserID,
+    activeSessionId: sessionId,
+    sessions: {
+      [sessionId]: {
+        ...record,
+        sessionId,
+        conversationKey,
+        active: true,
+      },
+    },
+  };
+};
+
+export const getStoredPeerIdentities = async () =>
+  (await localForage.getItem<Record<string, PeerIdentityRecord>>(PEER_IDENTITY_KEY)) ??
+  {};
+
+export const savePeerIdentities = async (records: Record<string, PeerIdentityRecord>) =>
+  localForage.setItem(PEER_IDENTITY_KEY, records);
+
+export const getStoredSessions = async () => {
+  const records =
+    (await localForage.getItem<
+      Record<string, ConversationSessionRecord | SessionRecord>
+    >(SESSION_STORE_KEY)) ?? {};
+
+  return Object.entries(records).reduce<Record<string, ConversationSessionRecord>>(
+    (sessionStores, [conversationKey, record]) => ({
+      ...sessionStores,
+      [conversationKey]: normalizeSessionStoreRecord(conversationKey, record),
+    }),
+    {},
+  );
+};
+
+export const saveSessions = async (
+  records: Record<string, ConversationSessionRecord>,
+) => localForage.setItem(SESSION_STORE_KEY, records);
+
+export const getLocalIdentity = async () =>
+  (await localForage.getItem<LocalIdentityRecord>(LOCAL_IDENTITY_KEY)) ?? null;
+
+export const saveLocalIdentity = async (record: LocalIdentityRecord) =>
+  localForage.setItem(LOCAL_IDENTITY_KEY, record);
+
+export const setActiveSession = (
+  sessionStore: ConversationSessionRecord,
+  sessionId: string,
+) => {
+  Object.values(sessionStore.sessions).forEach((session) => {
+    session.active = session.sessionId === sessionId;
+  });
+  sessionStore.activeSessionId = sessionId;
+};
+
+export const getActiveSession = (sessionStore?: ConversationSessionRecord) =>
+  sessionStore?.activeSessionId
+    ? sessionStore.sessions[sessionStore.activeSessionId]
+    : undefined;
+
+export const getFallbackSession = (sessionStore?: ConversationSessionRecord) => {
+  if (!sessionStore) {
+    return undefined;
+  }
+
+  const activeSession = getActiveSession(sessionStore);
+  if (activeSession) {
+    return activeSession;
+  }
+
+  const sessionList = Object.values(sessionStore.sessions);
+  return sessionList.length === 1 ? sessionList[0] : undefined;
+};
