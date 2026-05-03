@@ -7,6 +7,7 @@ import clsx from "clsx";
 import { t } from "i18next";
 import { memo, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
 import OIMAvatar from "@/components/OIMAvatar";
 import { useConversationStore } from "@/store";
 import emitter from "@/utils/events";
@@ -26,14 +27,19 @@ const ConversationItem = ({ isActive, conversation }: IConversationProps) => {
   const updateCurrentConversation = useConversationStore(
     (state) => state.updateCurrentConversation,
   );
+  const currentConversationID = useConversationStore(
+    (state) => state.currentConversation?.conversationID,
+  );
   const [latestMessageContent, setLatestMessageContent] = useState("");
 
   const toSpecifiedConversation = async () => {
-    if (isActive) {
+    if (isActive && currentConversationID === conversation.conversationID) {
       return;
     }
     await updateCurrentConversation({ ...conversation });
-    navigate(`/chat/${conversation.conversationID}`);
+    if (!isActive) {
+      navigate(`/chat/${conversation.conversationID}`);
+    }
   };
 
   useEffect(() => {
@@ -67,12 +73,16 @@ const ConversationItem = ({ isActive, conversation }: IConversationProps) => {
       }
     };
 
+    const handleSecureSessionUpdated = () => {
+      void syncLatestMessageContent();
+    };
+
     void syncLatestMessageContent();
-    emitter.on("SECURE_SESSION_UPDATED", syncLatestMessageContent);
+    emitter.on("SECURE_SESSION_UPDATED", handleSecureSessionUpdated);
 
     return () => {
       disposed = true;
-      emitter.off("SECURE_SESSION_UPDATED", syncLatestMessageContent);
+      emitter.off("SECURE_SESSION_UPDATED", handleSecureSessionUpdated);
     };
   }, [conversation.latestMsg, conversation.conversationID]);
 
@@ -85,7 +95,9 @@ const ConversationItem = ({ isActive, conversation }: IConversationProps) => {
         "border border-transparent",
         isActive && `bg-[var(--primary-active)]`,
       )}
-      onClick={toSpecifiedConversation}
+      onClick={() => {
+        void toSpecifiedConversation();
+      }}
     >
       <Badge size="small" count={conversation.unreadCount}>
         <OIMAvatar

@@ -12,6 +12,7 @@ import OIMAvatar from "@/components/OIMAvatar";
 import { OverlayVisibleHandle } from "@/hooks/useOverlayVisible";
 import { useConversationStore, useUserStore } from "@/store";
 import emitter, { emit } from "@/utils/events";
+import { isGroupSession as isGroupConversation } from "@/utils/imCommon";
 import {
   getConversationSecureStatus,
   primeSecureConversation,
@@ -77,7 +78,9 @@ const ChatHeader = () => {
     const syncSecureStatus = async () => {
       try {
         await primeSecureConversation(currentConversation);
-      } catch {}
+      } catch (error) {
+        console.error(error);
+      }
 
       const status = await getConversationSecureStatus(currentConversation);
       if (!disposed) {
@@ -85,13 +88,17 @@ const ChatHeader = () => {
       }
     };
 
+    const handleSecureSessionUpdated = () => {
+      void syncSecureStatus();
+    };
+
     void syncSecureStatus();
-    emitter.on("SECURE_SESSION_UPDATED", syncSecureStatus);
+    emitter.on("SECURE_SESSION_UPDATED", handleSecureSessionUpdated);
     return () => {
       disposed = true;
-      emitter.off("SECURE_SESSION_UPDATED", syncSecureStatus);
+      emitter.off("SECURE_SESSION_UPDATED", handleSecureSessionUpdated);
     };
-  }, [currentConversation?.conversationID]);
+  }, [currentConversation]);
 
   const menuClick = (idx: number) => {
     switch (idx) {
@@ -117,12 +124,11 @@ const ChatHeader = () => {
   };
 
   const isSingleSession = currentConversation?.conversationType === SessionType.Single;
-  const isGroupSession = currentConversation?.conversationType === SessionType.Group;
+  const isGroupSession = isGroupConversation(currentConversation?.conversationType);
   const showReadyBadge = secureSessionStatus === "ready";
   const showPendingBadge =
     isSingleSession &&
-    (secureSessionStatus === "identity_pending" ||
-      secureSessionStatus === "not_ready");
+    (secureSessionStatus === "identity_pending" || secureSessionStatus === "not_ready");
   const showRiskBadge = secureSessionStatus === "peer_key_changed";
 
   return (
