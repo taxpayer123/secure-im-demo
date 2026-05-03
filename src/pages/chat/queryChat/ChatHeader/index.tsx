@@ -1,6 +1,6 @@
-import { SafetyCertificateFilled } from "@ant-design/icons";
+import { ReloadOutlined, SafetyCertificateFilled } from "@ant-design/icons";
 import { SessionType } from "@openim/wasm-client-sdk";
-import { Layout, Tooltip } from "antd";
+import { App, Button, Layout, Tooltip } from "antd";
 import clsx from "clsx";
 import i18n, { t } from "i18next";
 import { memo, useEffect, useRef, useState } from "react";
@@ -15,7 +15,9 @@ import emitter, { emit } from "@/utils/events";
 import { isGroupSession as isGroupConversation } from "@/utils/imCommon";
 import {
   getConversationSecureStatus,
+  getSecureSessionErrorMessage,
   primeSecureConversation,
+  resetConversationSecureSession,
   type SecureSessionStatus,
 } from "@/utils/secureSession";
 
@@ -47,6 +49,7 @@ i18n.on("languageChanged", () => {
 });
 
 const ChatHeader = () => {
+  const { message, modal } = App.useApp();
   const singleSettingRef = useRef<OverlayVisibleHandle>(null);
   const groupSettingRef = useRef<OverlayVisibleHandle>(null);
 
@@ -62,6 +65,7 @@ const ChatHeader = () => {
   );
   const [secureSessionStatus, setSecureSessionStatus] =
     useState<SecureSessionStatus>("not_ready");
+  const [resettingSecureSession, setResettingSecureSession] = useState(false);
 
   // locale re render
   useUserStore((state) => state.appSettings.locale);
@@ -123,6 +127,35 @@ const ChatHeader = () => {
     }
   };
 
+  const resetSecureSession = async () => {
+    if (!currentConversation || resettingSecureSession) {
+      return;
+    }
+
+    setResettingSecureSession(true);
+    try {
+      await resetConversationSecureSession(currentConversation);
+      message.success(t("toast.secureSessionResetSuccess"));
+      setSecureSessionStatus(await getConversationSecureStatus(currentConversation));
+    } catch (error) {
+      console.error(error);
+      message.error(getSecureSessionErrorMessage(error));
+    } finally {
+      setResettingSecureSession(false);
+    }
+  };
+
+  const openResetSecureSessionConfirm = () => {
+    modal.confirm({
+      title: t("placeholder.resetSecureSession"),
+      content: t("placeholder.confirmResetSecureSession"),
+      okText: t("confirm"),
+      cancelText: t("cancel"),
+      centered: true,
+      onOk: resetSecureSession,
+    });
+  };
+
   const isSingleSession = currentConversation?.conversationType === SessionType.Single;
   const isGroupSession = isGroupConversation(currentConversation?.conversationType);
   const showReadyBadge = secureSessionStatus === "ready";
@@ -172,6 +205,18 @@ const ChatHeader = () => {
                   <SafetyCertificateFilled />
                   <span>{t("placeholder.secureSessionKeyChanged")}</span>
                 </span>
+              )}
+              {isSingleSession && (
+                <Tooltip title={t("placeholder.resetSecureSession")}>
+                  <Button
+                    type="text"
+                    size="small"
+                    className="!h-6 !w-6 !min-w-0 !p-0 text-[var(--sub-text)]"
+                    icon={<ReloadOutlined rev={undefined} />}
+                    loading={resettingSecureSession}
+                    onClick={openResetSecureSessionConfirm}
+                  />
+                </Tooltip>
               )}
             </div>
           </div>

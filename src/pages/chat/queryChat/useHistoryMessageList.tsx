@@ -6,7 +6,10 @@ import { useParams } from "react-router-dom";
 import { IMSDK } from "@/layout/MainContentWrap";
 import emitter, { emit } from "@/utils/events";
 import { normalizeMessageForRender } from "@/utils/secureChat";
-import { isSecureControlMessage } from "@/utils/secureSession";
+import {
+  handleSecureControlMessages,
+  isSecureControlMessage,
+} from "@/utils/secureSession";
 
 const START_INDEX = 10000;
 const SPLIT_COUNT = 20;
@@ -83,6 +86,7 @@ export function useHistoryMessageList() {
         conversationID: conversationID ?? "",
         viewType: ViewType.History,
       });
+      await handleSecureControlMessages(data.messageList);
       const messageList = await Promise.all(
         data.messageList
           .filter((message) => !isSecureControlMessage(message))

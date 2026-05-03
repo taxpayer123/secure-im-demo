@@ -70,6 +70,8 @@ type SessionRecord = {
   peerUserID: string;
   peerFingerprint: string;
   sessionKey: string;
+  createdByUserID?: string;
+  inviteTimestamp?: number;
   createdAt: number;
   updatedAt: number;
 };
@@ -422,6 +424,57 @@ export const primeSecureConversation = async (conversation?: ConversationItem) =
 export const isSecureControlMessage = (message: MessageItem) =>
   Boolean(getSecureCustomPayload(message));
 
+const getSecureControlCustomType = (message: MessageItem) =>
+  getSecureCustomPayload(message)?.customType;
+
+export const handleSecureControlMessages = async (messages: MessageItem[]) => {
+  const identityMessages = messages.filter(
+    (message) => getSecureControlCustomType(message) === CustomType.SecureIdentity,
+  );
+  const sessionInviteMessages = messages.filter(
+    (message) =>
+      getSecureControlCustomType(message) === CustomType.SecureSessionInvite,
+  );
+
+  const handleControlMessage = async (message: MessageItem) => {
+    try {
+      await handleSecureControlMessage(message);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  for (const message of identityMessages) {
+    await handleControlMessage(message);
+  }
+  for (const message of sessionInviteMessages) {
+    await handleControlMessage(message);
+  }
+};
+
+const shouldIgnoreSessionInvite = (
+  existingSession: SessionRecord | undefined,
+  incomingPayload: SecureSessionInvitePayload,
+  selfUserID: string,
+) => {
+  if (!existingSession) {
+    return false;
+  }
+
+  if (
+    existingSession.inviteTimestamp &&
+    incomingPayload.timestamp <= existingSession.inviteTimestamp
+  ) {
+    return true;
+  }
+
+  const preferredCreatorUserID = [selfUserID, incomingPayload.userID].sort()[0];
+  return (
+    existingSession.createdByUserID === preferredCreatorUserID &&
+    incomingPayload.userID !== preferredCreatorUserID
+  );
+};
+
 export const handleSecureControlMessage = async (message: MessageItem) => {
   const payload = getSecureCustomPayload(message);
   if (!payload || !payload.data) {
@@ -490,23 +543,37 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
     sessionPayload.ephemeralPublicKey,
     fromBase64(sessionPayload.salt),
   );
-  const sessionKeyBuffer = await getSubtleCrypto().decrypt(
-    {
-      name: "AES-GCM",
-      iv: fromBase64(sessionPayload.iv),
-    },
-    wrapKey,
-    fromBase64(sessionPayload.wrappedSessionKey),
-  );
+  let sessionKeyBuffer: ArrayBuffer;
+  try {
+    sessionKeyBuffer = await getSubtleCrypto().decrypt(
+      {
+        name: "AES-GCM",
+        iv: fromBase64(sessionPayload.iv),
+      },
+      wrapKey,
+      fromBase64(sessionPayload.wrappedSessionKey),
+    );
+  } catch (error) {
+    console.error(error);
+    return true;
+  }
 
   const selfUserID = await resolveSelfUserID();
   const conversationKey = getConversationKey(selfUserID, sessionPayload.userID);
   const sessions = await getStoredSessions();
+  if (
+    shouldIgnoreSessionInvite(sessions[conversationKey], sessionPayload, selfUserID)
+  ) {
+    return true;
+  }
+
   sessions[conversationKey] = {
     conversationKey,
     peerUserID: sessionPayload.userID,
     peerFingerprint: sessionPayload.fingerprint,
     sessionKey: toBase64(sessionKeyBuffer),
+    createdByUserID: sessionPayload.userID,
+    inviteTimestamp: sessionPayload.timestamp,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
@@ -635,18 +702,65 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
     ),
   };
 
-  sessions[conversationKey] = {
+  const nextSession: SessionRecord = {
     conversationKey,
     peerUserID,
     peerFingerprint: peerIdentity.fingerprint,
     sessionKey: toBase64(sessionKey),
+    createdByUserID: localIdentity.userID,
+    inviteTimestamp: payload.timestamp,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+  await sendCustomSignal(peerUserID, CustomType.SecureSessionInvite, payload);
+
+  sessions[conversationKey] = nextSession;
   await saveSessions(sessions);
   emit("SECURE_SESSION_UPDATED");
-  await sendCustomSignal(peerUserID, CustomType.SecureSessionInvite, payload);
-  return sessions[conversationKey];
+  return nextSession;
+};
+
+export const resetConversationSecureSession = async (
+  conversation?: ConversationItem,
+) => {
+  if (!conversation) {
+    throw new SecureSessionError("SECURE_SESSION_NOT_READY");
+  }
+  if (conversation.conversationType !== SessionType.Single) {
+    throw new SecureSessionError("SECURE_SESSION_GROUP_UNSUPPORTED");
+  }
+
+  const peerUserID = conversation.userID;
+  const selfUserID = await resolveSelfUserID();
+  if (!selfUserID || !peerUserID) {
+    throw new SecureSessionError("SECURE_SESSION_NOT_READY");
+  }
+
+  const conversationKey = getConversationKey(selfUserID, peerUserID);
+  const sessions = await getStoredSessions();
+  delete sessions[conversationKey];
+  await saveSessions(sessions);
+
+  const peerIdentities = await getStoredPeerIdentities();
+  const peerIdentity = peerIdentities[peerUserID];
+  if (peerIdentity?.keyChangedAt) {
+    const { keyChangedAt, ...trustedPeerIdentity } = peerIdentity;
+    peerIdentities[peerUserID] = {
+      ...trustedPeerIdentity,
+      trustedAt: Date.now(),
+      lastSeenAt: Date.now(),
+    };
+    await savePeerIdentities(peerIdentities);
+  }
+
+  emit("SECURE_SESSION_UPDATED");
+
+  if (peerIdentities[peerUserID]) {
+    await ensureConversationSession(conversation);
+    return;
+  }
+
+  await primeSecureConversation(conversation);
 };
 
 export const getConversationSessionKey = async (conversation?: ConversationItem) => {
