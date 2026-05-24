@@ -66,6 +66,7 @@ type SecureSessionInvitePayload = {
 ## Rules
 
 - All binary data is base64 encoded.
+- Group chat text messages are sent as plaintext and do not use `secure_text_v1`.
 - `secure_text_v1` version 2 messages must include `sessionId`.
 - Receivers decrypt with the session key matching `payload.sessionId`.
 - If the session key is missing, render `缺少历史会话密钥，无法解密`.

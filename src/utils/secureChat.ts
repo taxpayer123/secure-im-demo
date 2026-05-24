@@ -167,6 +167,10 @@ export async function encryptMessage(
     burnAfterRead?: boolean;
   },
 ): Promise<string> {
+  if (conversation?.groupID) {
+    return plaintext;
+  }
+
   validateSensitiveWords(plaintext);
   if (!globalThis.crypto?.subtle) {
     throw new SecureChatError("SECURE_CHAT_UNAVAILABLE");
