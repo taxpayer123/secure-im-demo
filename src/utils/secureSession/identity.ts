@@ -31,6 +31,7 @@ export const resolveSelfUserID = async () =>
 export const storePeerIdentity = async (payload: SecureIdentityPayload) => {
   const records = await getStoredPeerIdentities();
   const current = records[payload.userID];
+  // 首次信任时间保留，后续只刷新最近看到的身份；指纹变化则显式标记换钥。
   const nextRecord: PeerIdentityRecord = {
     userID: payload.userID,
     fingerprint: payload.fingerprint,
@@ -46,6 +47,7 @@ export const storePeerIdentity = async (payload: SecureIdentityPayload) => {
   records[payload.userID] = nextRecord;
   await savePeerIdentities(records);
   if (current && current.fingerprint !== payload.fingerprint) {
+    // 对端换钥后，旧 session 不再安全，全部降级为非激活状态，等待重新协商。
     const sessions = await getStoredSessions();
     Object.keys(sessions).forEach((conversationKey) => {
       const sessionStore = sessions[conversationKey];
@@ -83,6 +85,7 @@ export const buildIdentityPayload = async (
 
   return {
     ...payloadWithoutSignature,
+    // 签名文本必须由稳定字段构成，收发两端才能得到完全一致的验签输入。
     signature: await signText(
       identity.signingPrivateKey,
       buildIdentitySigningText(payloadWithoutSignature),
@@ -96,12 +99,14 @@ export const ensureLocalIdentity = async () => {
     throw new SecureSessionError("SECURE_SESSION_NOT_READY");
   }
 
+  // 本地身份和当前登录用户绑定，切账号后必须重新生成一套长期密钥。
   const existing = await getLocalIdentity();
   if (existing?.userID === currentUserID) {
     return existing;
   }
 
   const subtle = getSubtleCrypto();
+  // ECDH 用来协商会话密钥，ECDSA 用来给身份和 invite 做签名。
   const agreementKeyPair = await subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
     true,
@@ -155,6 +160,7 @@ export const primeSecureConversation = async (conversation?: ConversationItem) =
     return;
   }
 
+  // 首次进入单聊时预热身份交换，避免真正发起加密会话时再额外等待一轮往返。
   await sendCustomSignal(
     peerUserID,
     CustomType.SecureIdentity,

@@ -24,6 +24,7 @@ const normalizeSessionStoreRecord = (
     return record;
   }
 
+  // 兼容早期单 session 结构，读取时统一升级成当前的多 session 存储模型。
   const sessionId = record.sessionId || getLegacySessionId(conversationKey);
   return {
     conversationKey,
@@ -53,6 +54,7 @@ export const getStoredSessions = async () => {
       Record<string, ConversationSessionRecord | SessionRecord>
     >(SESSION_STORE_KEY)) ?? {};
 
+  // 在读取阶段做一次归一化，后续主流程就不需要再分支兼容旧数据结构。
   return Object.entries(records).reduce<Record<string, ConversationSessionRecord>>(
     (sessionStores, [conversationKey, record]) => ({
       ...sessionStores,
@@ -76,6 +78,7 @@ export const setActiveSession = (
   sessionStore: ConversationSessionRecord,
   sessionId: string,
 ) => {
+  // active flag 和 activeSessionId 必须同时更新，避免 UI 和加解密读取到不同会话。
   Object.values(sessionStore.sessions).forEach((session) => {
     session.active = session.sessionId === sessionId;
   });
@@ -97,6 +100,7 @@ export const getFallbackSession = (sessionStore?: ConversationSessionRecord) => 
     return activeSession;
   }
 
+  // 历史数据可能只剩一个未显式激活的 session，此时允许兜底复用它。
   const sessionList = Object.values(sessionStore.sessions);
   return sessionList.length === 1 ? sessionList[0] : undefined;
 };

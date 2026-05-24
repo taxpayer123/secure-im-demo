@@ -39,6 +39,7 @@ const getSecureControlCustomType = (message: MessageItem) =>
   getSecureCustomPayload(message)?.customType;
 
 export const handleSecureControlMessages = async (messages: MessageItem[]) => {
+  // 先落身份消息，再处理会话邀请，避免 invite 先到时本地还没有可用的对端公钥。
   const identityMessages = messages.filter(
     (message) => getSecureControlCustomType(message) === CustomType.SecureIdentity,
   );
@@ -95,6 +96,7 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
   const localIdentity = await ensureLocalIdentity();
   if (payload.customType === CustomType.SecureIdentity) {
     const identityPayload = payload.data as SecureIdentityPayload;
+    // 身份广播自带签名公钥，先验证“这把公钥是否真的认可这份身份声明”。
     const verified = await verifyText(
       identityPayload.signingPublicKey,
       buildIdentitySigningText({
@@ -115,6 +117,7 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
 
     await storePeerIdentity(identityPayload);
     if (identityPayload.needReply && !identityPayload.isReply) {
+      // 对端显式请求回包时，补发本端身份，完成最基础的双向身份同步。
       await sendCustomSignal(
         identityPayload.userID,
         CustomType.SecureIdentity,
@@ -127,10 +130,12 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
   const sessionPayload = payload.data as SecureSessionInvitePayload;
   const peerIdentities = await getStoredPeerIdentities();
   const peerIdentity = peerIdentities[sessionPayload.userID];
+  // invite 只能接受来自当前已信任身份的消息，避免陌生公钥直接注入会话。
   if (!peerIdentity || peerIdentity.fingerprint !== sessionPayload.fingerprint) {
     return true;
   }
 
+  // 会话参数由已保存的签名公钥兜底验签，防止 wrapped key 被篡改。
   const verified = await verifyText(
     peerIdentity.signingPublicKey,
     buildSessionSigningText({
@@ -150,6 +155,7 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
     return true;
   }
 
+  // 只有持有本端长期 ECDH 私钥的一方才能解出 invite 里包装过的 session key。
   const wrapKey = await deriveWrapKey(
     localIdentity.agreementPrivateKey,
     sessionPayload.ephemeralPublicKey,
@@ -177,6 +183,7 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
     `${getLegacySessionId(conversationKey)}_${sessionPayload.timestamp}`;
   const sessions = await getStoredSessions();
   const sessionStore = sessions[conversationKey];
+  // 同一 sessionId 只接受更新的 invite，避免旧消息回放覆盖新密钥。
   if (shouldIgnoreSessionInvite(sessionStore?.sessions[sessionId], sessionPayload)) {
     return true;
   }
@@ -199,6 +206,7 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
     updatedAt: Date.now(),
   };
 
+  // 只有在当前没有激活 session，或当前 invite 更新时，才切换到新会话。
   if (shouldActivateSessionInvite(sessionStore, sessionPayload)) {
     setActiveSession(nextSessionStore, sessionId);
   }
