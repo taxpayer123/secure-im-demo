@@ -30,8 +30,8 @@ const BLOCKED_WORDS = ["暴力", "违禁"];
 
 export type SecurePayload = {
   type: "secure_text_v1";
-  version?: 2;
-  sessionId?: string;
+  version: 2;
+  sessionId: string;
   alg: "AES-256-GCM";
   iv: string;
   ciphertext: string;
@@ -57,8 +57,8 @@ const isSecurePayload = (value: unknown): value is SecurePayload => {
   const payload = value as Record<string, unknown>;
   return (
     payload.type === SECURE_MESSAGE_TYPE &&
-    (payload.version === undefined || payload.version === 2) &&
-    (payload.version !== 2 || typeof payload.sessionId === "string") &&
+    payload.version === 2 &&
+    typeof payload.sessionId === "string" &&
     payload.alg === SECURE_MESSAGE_ALGORITHM &&
     typeof payload.iv === "string" &&
     typeof payload.ciphertext === "string" &&
@@ -194,9 +194,7 @@ export async function decryptMessage(message: MessageItem): Promise<string | nul
 
   const session = await getMessageSessionKey(message, payload.sessionId);
   if (!session) {
-    throw new SecureSessionError(
-      payload.sessionId ? "SECURE_SESSION_MISSING_KEY" : "SECURE_SESSION_NOT_READY",
-    );
+    throw new SecureSessionError("SECURE_SESSION_MISSING_KEY");
   }
 
   return decryptWithSharedKey(payload, readSessionKeyBytes(session));

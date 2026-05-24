@@ -69,5 +69,5 @@ type SecureSessionInvitePayload = {
 - `secure_text_v1` version 2 messages must include `sessionId`.
 - Receivers decrypt with the session key matching `payload.sessionId`.
 - If the session key is missing, render `缺少历史会话密钥，无法解密`.
-- Legacy `secure_text_v1` messages without `sessionId` may fall back to the active or only local session.
+- Legacy `secure_text_v1` messages without `sessionId` are not valid secure messages.
 - Session reset must not overwrite old session keys.

@@ -89,18 +89,3 @@ export const getActiveSession = (sessionStore?: ConversationSessionRecord) =>
   sessionStore?.activeSessionId
     ? sessionStore.sessions[sessionStore.activeSessionId]
     : undefined;
-
-export const getFallbackSession = (sessionStore?: ConversationSessionRecord) => {
-  if (!sessionStore) {
-    return undefined;
-  }
-
-  const activeSession = getActiveSession(sessionStore);
-  if (activeSession) {
-    return activeSession;
-  }
-
-  // 历史数据可能只剩一个未显式激活的 session，此时允许兜底复用它。
-  const sessionList = Object.values(sessionStore.sessions);
-  return sessionList.length === 1 ? sessionList[0] : undefined;
-};

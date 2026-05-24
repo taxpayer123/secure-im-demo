@@ -31,15 +31,14 @@ import { sendCustomSignal } from "./signal";
 import {
   getActiveSession,
   getConversationKey,
-  getFallbackSession,
   getStoredPeerIdentities,
   getStoredSessions,
   savePeerIdentities,
   saveSessions,
 } from "./store";
 import {
-  SecureSessionError,
   type ConversationSessionRecord,
+  SecureSessionError,
   type SecureSessionInvitePayload,
   type SecureSessionStatus,
   type SessionRecord,
@@ -272,10 +271,7 @@ export const getConversationSessionKey = async (conversation?: ConversationItem)
   );
 };
 
-export const getMessageSessionKey = async (
-  message: MessageItem,
-  sessionId?: string,
-) => {
+export const getMessageSessionKey = async (message: MessageItem, sessionId: string) => {
   if (message.sessionType !== SessionType.Single) {
     return null;
   }
@@ -284,12 +280,7 @@ export const getMessageSessionKey = async (
   const peerUserID = message.sendID === selfUserID ? message.recvID : message.sendID;
   const sessions = await getStoredSessions();
   const sessionStore = sessions[getConversationKey(selfUserID, peerUserID)];
-  if (sessionId) {
-    return sessionStore?.sessions[sessionId] ?? null;
-  }
-
-  // 兼容历史消息未显式携带 sessionId 的情况，此时只在“唯一可判定”时回退。
-  return getFallbackSession(sessionStore) ?? null;
+  return sessionStore?.sessions[sessionId] ?? null;
 };
 
 export const readSessionKeyBytes = (session: SessionRecord) =>
