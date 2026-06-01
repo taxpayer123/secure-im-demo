@@ -21,12 +21,14 @@ import {
   readSessionKeyBytes,
   SecureSessionError,
 } from "./secureSession";
+import { getGroupSessionKeyBytes } from "./secureSession/groupSession";
 
 const SECURE_MESSAGE_TYPE = "secure_text_v1";
+const SECURE_GROUP_MESSAGE_TYPE = "secure_group_text_v1";
 const SECURE_MESSAGE_ALGORITHM = "AES-256-GCM";
 const IV_LENGTH = 12;
 const SALT_LENGTH = 16;
-const BLOCKED_WORDS = ["暴力", "违禁"];
+const BLOCKED_WORDS = ["鏆村姏", "杩濈"];
 
 export type SecurePayload = {
   type: "secure_text_v1";
@@ -38,6 +40,17 @@ export type SecurePayload = {
   salt: string;
   timestamp: number;
   burnAfterRead?: boolean;
+};
+
+export type SecureGroupPayload = {
+  type: "secure_group_text_v1";
+  version: 1;
+  groupID: string;
+  alg: "AES-256-GCM";
+  iv: string;
+  ciphertext: string;
+  salt: string;
+  timestamp: number;
 };
 
 type SecureChatErrorCode = "SECURE_CHAT_BLOCKED_CONTENT" | "SECURE_CHAT_UNAVAILABLE";
@@ -68,6 +81,21 @@ const isSecurePayload = (value: unknown): value is SecurePayload => {
   );
 };
 
+const isSecureGroupPayload = (value: unknown): value is SecureGroupPayload => {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  return (
+    payload.type === SECURE_GROUP_MESSAGE_TYPE &&
+    payload.version === 1 &&
+    typeof payload.groupID === "string" &&
+    payload.alg === SECURE_MESSAGE_ALGORITHM &&
+    typeof payload.iv === "string" &&
+    typeof payload.ciphertext === "string" &&
+    typeof payload.salt === "string" &&
+    typeof payload.timestamp === "number"
+  );
+};
+
 const parseSecurePayload = (content?: string | null) => {
   if (!content) {
     return null;
@@ -76,6 +104,16 @@ const parseSecurePayload = (content?: string | null) => {
   try {
     const payload = JSON.parse(content);
     return isSecurePayload(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+};
+
+const parseGroupSecurePayload = (content?: string | null): SecureGroupPayload | null => {
+  if (!content) return null;
+  try {
+    const payload = JSON.parse(content);
+    return isSecureGroupPayload(payload) ? payload : null;
   } catch {
     return null;
   }
@@ -167,8 +205,35 @@ export async function encryptMessage(
     burnAfterRead?: boolean;
   },
 ): Promise<string> {
-  if (conversation?.groupID) {
-    return plaintext;
+  const isGroup =
+    conversation?.groupID ||
+    (conversation?.conversationType && [3, 4].includes(conversation.conversationType));
+
+  if (isGroup) {
+    const groupKey = await getGroupSessionKeyBytes(conversation!.groupID);
+    if (!groupKey) {
+      return plaintext;
+    }
+    validateSensitiveWords(plaintext);
+    const iv = randomBytes(IV_LENGTH);
+    const salt = randomBytes(SALT_LENGTH);
+    const subtle = getSubtleCrypto();
+    const ciphertext = await subtle.encrypt(
+      { name: "AES-GCM", iv },
+      await importAesKey(groupKey),
+      encoder.encode(plaintext),
+    );
+    const groupPayload: SecureGroupPayload = {
+      type: SECURE_GROUP_MESSAGE_TYPE,
+      version: 1,
+      groupID: conversation!.groupID,
+      alg: SECURE_MESSAGE_ALGORITHM,
+      iv: toBase64(iv),
+      ciphertext: toBase64(ciphertext),
+      salt: toBase64(salt),
+      timestamp: Date.now(),
+    };
+    return JSON.stringify(groupPayload);
   }
 
   validateSensitiveWords(plaintext);
@@ -204,13 +269,51 @@ export async function decryptMessage(message: MessageItem): Promise<string | nul
   return decryptWithSharedKey(payload, readSessionKeyBytes(session));
 }
 
-export const isSecureTextMessage = (message: MessageItem) =>
+export async function decryptGroupMessage(message: MessageItem): Promise<string | null> {
+  const payload = parseGroupSecurePayload(message.textElem?.content);
+  if (!payload) return null;
+
+  const groupKey = await getGroupSessionKeyBytes(payload.groupID);
+  if (!groupKey) {
+    throw new SecureSessionError("SECURE_SESSION_MISSING_KEY");
+  }
+
+  const subtle = getSubtleCrypto();
+  const plaintext = await subtle.decrypt(
+    { name: "AES-GCM", iv: fromBase64(payload.iv) },
+    await importAesKey(groupKey),
+    fromBase64(payload.ciphertext),
+  );
+  return decoder.decode(plaintext);
+}
+
+export const isSecureGroupTextMessage = (message: MessageItem) =>
   message.contentType === MessageType.TextMessage &&
-  Boolean(parseSecurePayload(message.textElem?.content));
+  Boolean(parseGroupSecurePayload(message.textElem?.content));
+
+export const isSecureTextMessage = (message: MessageItem) =>
+  isSecureGroupTextMessage(message) ||
+  (message.contentType === MessageType.TextMessage &&
+    Boolean(parseSecurePayload(message.textElem?.content)));
 
 export async function normalizeMessageForRender(
   message: MessageItem,
 ): Promise<MessageItem> {
+  if (isSecureGroupTextMessage(message)) {
+    try {
+      const plaintext = await decryptGroupMessage(message);
+      return withTextContent(message, plaintext ?? "");
+    } catch (error) {
+      if (
+        error instanceof SecureSessionError &&
+        error.code === "SECURE_SESSION_MISSING_KEY"
+      ) {
+        return withTextContent(message, t("placeholder.secureSessionMissingKey"));
+      }
+      return withTextContent(message, t("placeholder.secureDecryptFailed"));
+    }
+  }
+
   if (!isSecureTextMessage(message)) {
     return message;
   }

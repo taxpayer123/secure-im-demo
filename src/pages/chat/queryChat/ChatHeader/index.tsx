@@ -1,6 +1,6 @@
-import { ReloadOutlined, SafetyCertificateFilled } from "@ant-design/icons";
+import { LockOutlined, ReloadOutlined, SafetyCertificateFilled } from "@ant-design/icons";
 import { SessionType } from "@openim/wasm-client-sdk";
-import { App, Button, Layout, Tooltip } from "antd";
+import { App, Button, Layout, Tag, Tooltip } from "antd";
 import clsx from "clsx";
 import i18n, { t } from "i18next";
 import { memo, useEffect, useRef, useState } from "react";
@@ -20,6 +20,7 @@ import {
   resetConversationSecureSession,
   type SecureSessionStatus,
 } from "@/utils/secureSession";
+import { enableGroupEncryption } from "@/utils/secureSession/groupSession";
 
 import GroupSetting from "../GroupSetting";
 import SingleSetting from "../SingleSetting";
@@ -66,6 +67,7 @@ const ChatHeader = () => {
   const [secureSessionStatus, setSecureSessionStatus] =
     useState<SecureSessionStatus>("not_ready");
   const [resettingSecureSession, setResettingSecureSession] = useState(false);
+  const [enablingGroupEncryption, setEnablingGroupEncryption] = useState(false);
 
   // locale re render
   useUserStore((state) => state.appSettings.locale);
@@ -86,7 +88,18 @@ const ChatHeader = () => {
         console.error(error);
       }
 
-      const status = await getConversationSecureStatus(currentConversation);
+      let status = await getConversationSecureStatus(currentConversation);
+
+      if (status === "not_ready") {
+        try {
+          const { ensureConversationSession } = await import("@/utils/secureSession");
+          await ensureConversationSession(currentConversation);
+          status = await getConversationSecureStatus(currentConversation);
+        } catch (error) {
+          // identity not yet exchanged
+        }
+      }
+
       if (!disposed) {
         setSecureSessionStatus(status);
       }
@@ -156,13 +169,29 @@ const ChatHeader = () => {
     });
   };
 
+  const handleEnableGroupEncryption = async () => {
+    if (!currentConversation?.groupID || enablingGroupEncryption) return;
+    setEnablingGroupEncryption(true);
+    try {
+      await enableGroupEncryption(currentConversation.groupID);
+      message.success("Group E2EE enabled");
+      setSecureSessionStatus(await getConversationSecureStatus(currentConversation));
+    } catch (error: any) {
+      message.error(error.message || "Failed to enable group encryption");
+    } finally {
+      setEnablingGroupEncryption(false);
+    }
+  };
+
   const isSingleSession = currentConversation?.conversationType === SessionType.Single;
   const isGroupSession = isGroupConversation(currentConversation?.conversationType);
-  const showReadyBadge = secureSessionStatus === "ready";
+  const showReadyBadge = !isGroupSession && secureSessionStatus === "ready";
   const showPendingBadge =
     isSingleSession &&
     (secureSessionStatus === "identity_pending" || secureSessionStatus === "not_ready");
-  const showRiskBadge = secureSessionStatus === "peer_key_changed";
+  const showRiskBadge = !isGroupSession && secureSessionStatus === "peer_key_changed";
+  const showGroupReady = isGroupSession && secureSessionStatus === "ready";
+  const showGroupNotReady = isGroupSession && secureSessionStatus !== "ready";
 
   return (
     <Layout.Header className="relative border-b border-b-[var(--gap-text)] !bg-white !px-3">
@@ -205,6 +234,23 @@ const ChatHeader = () => {
                   <SafetyCertificateFilled />
                   <span>{t("placeholder.secureSessionKeyChanged")}</span>
                 </span>
+              )}
+              {showGroupReady && (
+                <Tag color="success" style={{ marginRight: 0 }}>
+                  <LockOutlined /> E2EE
+                </Tag>
+              )}
+              {showGroupNotReady && (
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<LockOutlined />}
+                  loading={enablingGroupEncryption}
+                  onClick={handleEnableGroupEncryption}
+                  style={{ marginRight: 0 }}
+                >
+                  Enable E2EE
+                </Button>
               )}
               {isSingleSession && (
                 <Tooltip title={t("placeholder.resetSecureSession")}>

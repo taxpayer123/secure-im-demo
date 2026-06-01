@@ -4,11 +4,15 @@ import type { MessageItem } from "@openim/wasm-client-sdk/lib/types/entity";
 import { CustomType } from "@/constants";
 import { IMSDK } from "@/layout/MainContentWrap";
 
-import type { SecureIdentityPayload, SecureSessionInvitePayload } from "./types";
+import type {
+  SecureIdentityPayload,
+  SecureSessionInvitePayload,
+  SecureGroupSessionInvitePayload,
+} from "./types";
 
 const buildCustomMessagePayload = (
   customType: CustomType,
-  data: SecureIdentityPayload | SecureSessionInvitePayload,
+  data: SecureIdentityPayload | SecureSessionInvitePayload | SecureGroupSessionInvitePayload,
 ) =>
   JSON.stringify({
     customType,
@@ -28,7 +32,8 @@ export const getSecureCustomPayload = (message: MessageItem) => {
     };
     if (
       payload.customType !== CustomType.SecureIdentity &&
-      payload.customType !== CustomType.SecureSessionInvite
+  payload.customType !== CustomType.SecureSessionInvite &&
+  payload.customType !== CustomType.SecureGroupSessionInvite
     ) {
       return null;
     }

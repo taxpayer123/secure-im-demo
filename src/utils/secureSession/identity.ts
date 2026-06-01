@@ -160,7 +160,6 @@ export const primeSecureConversation = async (conversation?: ConversationItem) =
     return;
   }
 
-  // 首次进入单聊时预热身份交换，避免真正发起加密会话时再额外等待一轮往返。
   await sendCustomSignal(
     peerUserID,
     CustomType.SecureIdentity,

@@ -51,7 +51,8 @@ export const getConversationSecureStatus = async (
     return "not_ready";
   }
   if (conversation.conversationType !== SessionType.Single) {
-    return "group_unsupported";
+    const { getGroupSecureStatus } = await import("./groupSession");
+    return getGroupSecureStatus(conversation.groupID);
   }
 
   const peerIdentities = await getStoredPeerIdentities();

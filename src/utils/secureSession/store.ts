@@ -1,9 +1,10 @@
 import * as localForage from "localforage";
 
-import { LOCAL_IDENTITY_KEY, PEER_IDENTITY_KEY, SESSION_STORE_KEY } from "./constants";
+import { GROUP_SESSION_STORE_KEY, LOCAL_IDENTITY_KEY, PEER_IDENTITY_KEY, SESSION_STORE_KEY } from "./constants";
 import { getLegacySessionId } from "./crypto";
 import type {
   ConversationSessionRecord,
+  GroupSessionRecord,
   LocalIdentityRecord,
   PeerIdentityRecord,
   SessionRecord,
@@ -24,7 +25,6 @@ const normalizeSessionStoreRecord = (
     return record;
   }
 
-  // 兼容早期单 session 结构，读取时统一升级成当前的多 session 存储模型。
   const sessionId = record.sessionId || getLegacySessionId(conversationKey);
   return {
     conversationKey,
@@ -52,9 +52,9 @@ export const getStoredSessions = async () => {
   const records =
     (await localForage.getItem<
       Record<string, ConversationSessionRecord | SessionRecord>
-    >(SESSION_STORE_KEY)) ?? {};
+    >(SESSION_STORE_KEY)) ??
+    {};
 
-  // 在读取阶段做一次归一化，后续主流程就不需要再分支兼容旧数据结构。
   return Object.entries(records).reduce<Record<string, ConversationSessionRecord>>(
     (sessionStores, [conversationKey, record]) => ({
       ...sessionStores,
@@ -78,7 +78,6 @@ export const setActiveSession = (
   sessionStore: ConversationSessionRecord,
   sessionId: string,
 ) => {
-  // active flag 和 activeSessionId 必须同时更新，避免 UI 和加解密读取到不同会话。
   Object.values(sessionStore.sessions).forEach((session) => {
     session.active = session.sessionId === sessionId;
   });
@@ -89,3 +88,21 @@ export const getActiveSession = (sessionStore?: ConversationSessionRecord) =>
   sessionStore?.activeSessionId
     ? sessionStore.sessions[sessionStore.activeSessionId]
     : undefined;
+
+export const getStoredGroupSessions = async () =>
+  (await localForage.getItem<Record<string, GroupSessionRecord>>(GROUP_SESSION_STORE_KEY)) ??
+  {};
+
+export const saveGroupSessions = async (records: Record<string, GroupSessionRecord>) =>
+  localForage.setItem(GROUP_SESSION_STORE_KEY, records);
+
+export const getGroupSession = async (groupID: string) => {
+  const sessions = await getStoredGroupSessions();
+  return sessions[groupID] ?? null;
+};
+
+export const saveGroupSession = async (record: GroupSessionRecord) => {
+  const sessions = await getStoredGroupSessions();
+  sessions[record.groupID] = record;
+  await saveGroupSessions(sessions);
+};

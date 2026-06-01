@@ -1,3 +1,4 @@
+import { handleGroupSessionInvite } from "./groupControl";
 import type { MessageItem } from "@openim/wasm-client-sdk/lib/types/entity";
 
 import { CustomType } from "@/constants";
@@ -46,6 +47,9 @@ export const handleSecureControlMessages = async (messages: MessageItem[]) => {
   const sessionInviteMessages = messages.filter(
     (message) => getSecureControlCustomType(message) === CustomType.SecureSessionInvite,
   );
+  const groupSessionInviteMessages = messages.filter(
+    (message) => getSecureControlCustomType(message) === CustomType.SecureGroupSessionInvite,
+  );
 
   const handleControlMessage = async (message: MessageItem) => {
     try {
@@ -59,6 +63,9 @@ export const handleSecureControlMessages = async (messages: MessageItem[]) => {
     await handleControlMessage(message);
   }
   for (const message of sessionInviteMessages) {
+    await handleControlMessage(message);
+  }
+  for (const message of groupSessionInviteMessages) {
     await handleControlMessage(message);
   }
 };

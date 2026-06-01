@@ -28,7 +28,7 @@ import { useContactStore } from "@/store/contact";
 import { feedbackToast } from "@/utils/common";
 import { initStore } from "@/utils/imCommon";
 import { normalizeMessageForRender } from "@/utils/secureChat";
-import { handleSecureControlMessage } from "@/utils/secureSession";
+import { handleSecureControlMessage, isSecureControlMessage } from "@/utils/secureSession";
 import { clearIMProfile, getIMToken, getIMUserID } from "@/utils/storage";
 
 import { IMSDK } from "./MainContentWrap";
@@ -261,6 +261,11 @@ export function useGlobalEvent() {
   // message
   const newMessageHandler = ({ data }: WSEvent<MessageItem[]>) => {
     if (useUserStore.getState().syncState === "loading" || resume.current) {
+      data.forEach((message) => {
+        if (isSecureControlMessage(message)) {
+          void handleSecureControlMessage(message);
+        }
+      });
       return;
     }
     data.forEach((message) => {
@@ -346,6 +351,8 @@ export function useGlobalEvent() {
   };
   const friednAddedHandler = ({ data }: WSEvent<FriendUserItem>) => {
     pushNewFriend(data);
+    getFriendListByReq();
+    getConversationListByReq();
   };
   const friednDeletedHandler = ({ data }: WSEvent<FriendUserItem>) => {
     updateFriend(data, true);

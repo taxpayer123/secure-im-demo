@@ -84,3 +84,29 @@ export class SecureSessionError extends Error {
     this.name = "SecureSessionError";
   }
 }
+
+
+export type GroupSessionRecord = {
+  groupID: string;
+  sessionKey: string;
+  version: number;
+  createdBy: string;
+  memberFingerprints: string[];
+  createdAt: number;
+  updatedAt: number;
+};
+
+
+export type SecureGroupSessionInvitePayload = {
+  type: "secure_group_session_invite_v1";
+  groupID: string;
+  version: number;
+  userID: string;
+  fingerprint: string;
+  ephemeralPublicKey: JsonWebKey;
+  wrappedGroupKey: string;
+  iv: string;
+  salt: string;
+  timestamp: number;
+  signature: string;
+};

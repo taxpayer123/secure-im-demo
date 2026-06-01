@@ -33,4 +33,5 @@ export enum CustomType {
   CallingHungup = 204,
   SecureIdentity = 300,
   SecureSessionInvite = 301,
+  SecureGroupSessionInvite = 302,
 }

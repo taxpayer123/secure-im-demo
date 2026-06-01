@@ -155,23 +155,33 @@ export const ChooseContact: FC<ChooseContactProps> = ({
     setLoading(true);
     try {
       switch (type) {
-        case "CRATE_GROUP":
-          if (choosedList.length === 1) {
-            toSpecifiedConversation({
-              sourceID: choosedList[0].userID!,
-              sessionType: SessionType.Single,
-            });
-            break;
-          }
-          await IMSDK.createGroup({
-            groupInfo: {
-              groupType: GroupType.WorkingGroup,
-              groupName: groupBaseInfo.groupName,
-              faceURL: groupBaseInfo.groupAvatar,
-            },
-            memberUserIDs: choosedList.map((item) => item.userID!),
-            adminUserIDs: [],
+                case "CRATE_GROUP":
+          console.log("[ChooseModal] Creating group:", {
+            groupName: groupBaseInfo.groupName,
+            memberCount: choosedList.length,
+            memberUserIDs: choosedList.map((item) => item.userID),
           });
+          try {
+            const { data: groupData } = await IMSDK.createGroup({
+              groupInfo: {
+                groupType: GroupType.WorkingGroup,
+                groupName: groupBaseInfo.groupName,
+                faceURL: groupBaseInfo.groupAvatar,
+              },
+              memberUserIDs: choosedList.map((item) => item.userID!),
+              adminUserIDs: [],
+            });
+            console.log("[ChooseModal] Group created:", groupData);
+            if (groupData?.groupID) {
+              await toSpecifiedConversation({
+                sourceID: groupData.groupID,
+                sessionType: SessionType.Group,
+              });
+            }
+          } catch (createErr) {
+            console.error("[ChooseModal] createGroup failed:", createErr);
+            throw createErr;
+          }
           break;
         case "INVITE_TO_GROUP":
           await IMSDK.inviteUserToGroup({
