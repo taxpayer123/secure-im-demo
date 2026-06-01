@@ -12,6 +12,7 @@ export {
   getSecureSessionErrorMessage,
   readSessionKeyBytes,
   resetConversationSecureSession,
+  resetAllSecureSessions,
 } from "./secureSession/session";
 export { SecureSessionError } from "./secureSession/types";
 export type { SecureSessionStatus, SessionRecord } from "./secureSession/types";

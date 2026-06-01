@@ -53,7 +53,7 @@ export const getStoredSessions = async () => {
     (await localForage.getItem<
       Record<string, ConversationSessionRecord | SessionRecord>
     >(SESSION_STORE_KEY)) ??
-    {};
+  {};
 
   return Object.entries(records).reduce<Record<string, ConversationSessionRecord>>(
     (sessionStores, [conversationKey, record]) => ({
@@ -105,4 +105,11 @@ export const saveGroupSession = async (record: GroupSessionRecord) => {
   const sessions = await getStoredGroupSessions();
   sessions[record.groupID] = record;
   await saveGroupSessions(sessions);
+};
+
+export const clearAllSecureData = async () => {
+  await localForage.removeItem(PEER_IDENTITY_KEY);
+  await localForage.removeItem(SESSION_STORE_KEY);
+  await localForage.removeItem(LOCAL_IDENTITY_KEY);
+  await localForage.removeItem(GROUP_SESSION_STORE_KEY);
 };

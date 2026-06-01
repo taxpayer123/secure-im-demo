@@ -31,24 +31,16 @@ export const resolveSelfUserID = async () =>
 export const storePeerIdentity = async (payload: SecureIdentityPayload) => {
   const records = await getStoredPeerIdentities();
   const current = records[payload.userID];
-  // 首次信任时间保留，后续只刷新最近看到的身份；指纹变化则显式标记换钥。
-  const nextRecord: PeerIdentityRecord = {
-    userID: payload.userID,
-    fingerprint: payload.fingerprint,
-    agreementPublicKey: payload.agreementPublicKey,
-    signingPublicKey: payload.signingPublicKey,
-    trustedAt: current?.trustedAt ?? Date.now(),
-    lastSeenAt: Date.now(),
-    ...(current && current.fingerprint !== payload.fingerprint
-      ? { keyChangedAt: Date.now() }
-      : { keyChangedAt: current?.keyChangedAt }),
-  };
+  const fingerprintChanged = Boolean(current && current.fingerprint !== payload.fingerprint);
 
-  records[payload.userID] = nextRecord;
-  await savePeerIdentities(records);
-  if (current && current.fingerprint !== payload.fingerprint) {
-    // 对端换钥后，旧 session 不再安全，全部降级为非激活状态，等待重新协商。
+  let shouldFlagKeyChanged = false;
+  if (fingerprintChanged) {
     const sessions = await getStoredSessions();
+    shouldFlagKeyChanged = Object.values(sessions).some(
+      (sessionStore) =>
+        sessionStore.peerUserID === payload.userID && sessionStore.activeSessionId,
+    );
+
     Object.keys(sessions).forEach((conversationKey) => {
       const sessionStore = sessions[conversationKey];
       if (sessionStore.peerUserID === payload.userID) {
@@ -60,6 +52,23 @@ export const storePeerIdentity = async (payload: SecureIdentityPayload) => {
     });
     await saveSessions(sessions);
   }
+
+  const nextRecord: PeerIdentityRecord = {
+    userID: payload.userID,
+    fingerprint: payload.fingerprint,
+    agreementPublicKey: payload.agreementPublicKey,
+    signingPublicKey: payload.signingPublicKey,
+    trustedAt: current?.trustedAt ?? Date.now(),
+    lastSeenAt: Date.now(),
+    ...(shouldFlagKeyChanged
+      ? { keyChangedAt: Date.now() }
+      : fingerprintChanged
+        ? {}
+        : { keyChangedAt: current?.keyChangedAt }),
+  };
+
+  records[payload.userID] = nextRecord;
+  await savePeerIdentities(records);
   emit("SECURE_SESSION_UPDATED");
 
   return nextRecord;
@@ -85,7 +94,6 @@ export const buildIdentityPayload = async (
 
   return {
     ...payloadWithoutSignature,
-    // 签名文本必须由稳定字段构成，收发两端才能得到完全一致的验签输入。
     signature: await signText(
       identity.signingPrivateKey,
       buildIdentitySigningText(payloadWithoutSignature),
@@ -99,14 +107,12 @@ export const ensureLocalIdentity = async () => {
     throw new SecureSessionError("SECURE_SESSION_NOT_READY");
   }
 
-  // 本地身份和当前登录用户绑定，切账号后必须重新生成一套长期密钥。
   const existing = await getLocalIdentity();
   if (existing?.userID === currentUserID) {
     return existing;
   }
 
   const subtle = getSubtleCrypto();
-  // ECDH 用来协商会话密钥，ECDSA 用来给身份和 invite 做签名。
   const agreementKeyPair = await subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
     true,

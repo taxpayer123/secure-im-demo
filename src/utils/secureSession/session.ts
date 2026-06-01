@@ -29,6 +29,7 @@ import {
 } from "./identity";
 import { sendCustomSignal } from "./signal";
 import {
+  clearAllSecureData,
   getActiveSession,
   getConversationKey,
   getStoredPeerIdentities,
@@ -64,7 +65,6 @@ export const getConversationSecureStatus = async (
     return "peer_key_changed";
   }
 
-  // “ready” 的判定以当前会话是否有可用激活 session 为准，而不是仅仅拿到过身份。
   const selfUserID = await resolveSelfUserID();
   const conversationKey = getConversationKey(selfUserID, conversation.userID);
   const sessions = await getStoredSessions();
@@ -107,7 +107,6 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
   const peerIdentities = await getStoredPeerIdentities();
   const peerIdentity = peerIdentities[peerUserID];
   if (!peerIdentity) {
-    // 对端身份未知时先发身份探测，再让调用方感知“还不能发起安全会话”。
     await sendCustomSignal(
       peerUserID,
       CustomType.SecureIdentity,
@@ -124,14 +123,12 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
   const existingSessionStore = sessions[conversationKey];
   const existingSession = getActiveSession(existingSessionStore);
   if (existingSession?.peerFingerprint === peerIdentity.fingerprint) {
-    // 激活 session 和当前对端指纹一致时直接复用，避免重复协商。
     return existingSession;
   }
 
   const sessionId = createSessionId();
   const sessionKey = randomBytes(SESSION_KEY_LENGTH);
   const subtle = getSubtleCrypto();
-  // 发起方生成一次性 ECDH 密钥，与对端长期公钥协商出 wrap key 来包装 session key。
   const ephemeralKeyPair = await subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
     true,
@@ -177,7 +174,6 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
     ),
   };
 
-  // 发出 invite 前先把本地 session 准备好，这样发送成功后 UI 和收发逻辑能立刻切到新密钥。
   const nextSession: SessionRecord = {
     sessionId,
     conversationKey,
@@ -197,7 +193,6 @@ export const ensureConversationSession = async (conversation?: ConversationItem)
     peerUserID,
     sessions: {},
   };
-  // 同一会话只允许一个激活 session，旧 session 保留用于历史消息解密。
   Object.values(nextSessionStore.sessions).forEach((session) => {
     session.active = false;
   });
@@ -215,49 +210,61 @@ export const resetConversationSecureSession = async (
   if (!conversation) {
     throw new SecureSessionError("SECURE_SESSION_NOT_READY");
   }
-  if (conversation.conversationType !== SessionType.Single) {
-    throw new SecureSessionError("SECURE_SESSION_GROUP_UNSUPPORTED");
-  }
 
-  const peerUserID = conversation.userID;
-  const selfUserID = await resolveSelfUserID();
-  if (!selfUserID || !peerUserID) {
-    throw new SecureSessionError("SECURE_SESSION_NOT_READY");
-  }
+  if (conversation.conversationType === SessionType.Single) {
+    const peerUserID = conversation.userID;
+    const selfUserID = await resolveSelfUserID();
+    if (!selfUserID || !peerUserID) {
+      throw new SecureSessionError("SECURE_SESSION_NOT_READY");
+    }
 
-  const conversationKey = getConversationKey(selfUserID, peerUserID);
-  const sessions = await getStoredSessions();
-  const sessionStore = sessions[conversationKey];
-  if (sessionStore) {
-    // reset 先清空当前激活态，避免旧密钥继续被用于新消息。
-    sessionStore.activeSessionId = undefined;
-    Object.values(sessionStore.sessions).forEach((session) => {
-      session.active = false;
-    });
-  }
-  await saveSessions(sessions);
+    const conversationKey = getConversationKey(selfUserID, peerUserID);
+    const sessions = await getStoredSessions();
+    const sessionStore = sessions[conversationKey];
+    if (sessionStore) {
+      sessionStore.activeSessionId = undefined;
+      Object.values(sessionStore.sessions).forEach((session) => {
+        session.active = false;
+      });
+    }
+    await saveSessions(sessions);
 
-  const peerIdentities = await getStoredPeerIdentities();
-  const peerIdentity = peerIdentities[peerUserID];
-  if (peerIdentity?.keyChangedAt) {
-    // 用户确认重置后，视为重新信任当前对端身份，并重新允许建链。
-    const { keyChangedAt, ...trustedPeerIdentity } = peerIdentity;
-    peerIdentities[peerUserID] = {
-      ...trustedPeerIdentity,
-      trustedAt: Date.now(),
-      lastSeenAt: Date.now(),
-    };
-    await savePeerIdentities(peerIdentities);
-  }
+    const peerIdentities = await getStoredPeerIdentities();
+    const peerIdentity = peerIdentities[peerUserID];
+    if (peerIdentity?.keyChangedAt) {
+      const { keyChangedAt, ...trustedPeerIdentity } = peerIdentity;
+      peerIdentities[peerUserID] = {
+        ...trustedPeerIdentity,
+        trustedAt: Date.now(),
+        lastSeenAt: Date.now(),
+      };
+      await savePeerIdentities(peerIdentities);
+    }
 
-  emit("SECURE_SESSION_UPDATED");
+    emit("SECURE_SESSION_UPDATED");
 
-  if (peerIdentities[peerUserID]) {
-    await ensureConversationSession(conversation);
+    if (peerIdentities[peerUserID]) {
+      await ensureConversationSession(conversation);
+      return;
+    }
+
+    await primeSecureConversation(conversation);
     return;
   }
 
-  await primeSecureConversation(conversation);
+  // Group conversation reset
+  const { saveGroupSessions, getStoredGroupSessions } = await import("./store");
+  const groupSessions = await getStoredGroupSessions();
+  if (groupSessions[conversation.groupID]) {
+    delete groupSessions[conversation.groupID];
+    await saveGroupSessions(groupSessions);
+  }
+  emit("SECURE_SESSION_UPDATED");
+};
+
+export const resetAllSecureSessions = async () => {
+  await clearAllSecureData();
+  emit("SECURE_SESSION_UPDATED");
 };
 
 export const getConversationSessionKey = async (conversation?: ConversationItem) => {

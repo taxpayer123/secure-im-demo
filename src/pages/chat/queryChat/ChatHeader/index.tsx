@@ -18,6 +18,7 @@ import {
   getSecureSessionErrorMessage,
   primeSecureConversation,
   resetConversationSecureSession,
+  resetAllSecureSessions,
   type SecureSessionStatus,
 } from "@/utils/secureSession";
 import { enableGroupEncryption } from "@/utils/secureSession/groupSession";
@@ -71,6 +72,17 @@ const ChatHeader = () => {
 
   // locale re render
   useUserStore((state) => state.appSettings.locale);
+
+  // Expose resetAllSecureSessions to console for debugging
+  useEffect(() => {
+    (window as any).resetAllSecureSessions = async () => {
+      await resetAllSecureSessions();
+      window.location.reload();
+    };
+    return () => {
+      delete (window as any).resetAllSecureSessions;
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;

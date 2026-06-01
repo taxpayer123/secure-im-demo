@@ -66,7 +66,11 @@ export const handleSecureControlMessages = async (messages: MessageItem[]) => {
     await handleControlMessage(message);
   }
   for (const message of groupSessionInviteMessages) {
-    await handleControlMessage(message);
+    try {
+      await handleGroupSessionInvite(message);
+    } catch (error) {
+      console.error(error);
+    }
   }
 };
 
@@ -130,6 +134,15 @@ export const handleSecureControlMessage = async (message: MessageItem) => {
         CustomType.SecureIdentity,
         await buildIdentityPayload(localIdentity, { isReply: true }),
       );
+    }
+    return true;
+  }
+
+ if (payload.customType === CustomType.SecureGroupSessionInvite) {
+    try {
+      await handleGroupSessionInvite(message);
+    } catch (error) {
+      console.error(error);
     }
     return true;
   }
